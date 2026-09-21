@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "regent-receipt-verify"
+version = "0.1.0"
+description = "Verify Regent Control receipts and allow tokens offline against a saved JWKS; open mandate and policy reveals"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["cryptography>=41.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+regent-verify = "regent_receipt_verify.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/regent_receipt_verify"]

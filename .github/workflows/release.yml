@@ -1,0 +1,64 @@
+name: release
+
+# Tag v* → build, then publish. PyPI uses OIDC trusted publishing (no tokens; the project's
+# pending publisher must name this repo, this workflow and the `pypi` environment). npm uses
+# the NPM_TOKEN repository secret (automation token) with provenance; the job is skipped when
+# the secret is absent so a PyPI-only release still works.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e "receipt-verify-python[dev]" build
+      - run: pytest -q receipt-verify-python
+      - run: python -m build receipt-verify-python -o dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+        working-directory: receipt-verify-node
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # OIDC trusted publishing — no tokens anywhere
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # provenance attestation
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: publish
+        if: ${{ env.NPM_TOKEN != '' }}
+        run: npm publish --access public --provenance
+        working-directory: receipt-verify-node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
