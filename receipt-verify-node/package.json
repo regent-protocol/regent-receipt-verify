@@ -37,5 +37,17 @@
     "verify",
     "evidence",
     "audit"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/regent-protocol/regent-receipt-verify.git",
+    "directory": "receipt-verify-node"
+  },
+  "homepage": "https://github.com/regent-protocol/regent-receipt-verify#readme",
+  "bugs": {
+    "url": "https://github.com/regent-protocol/regent-receipt-verify/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
