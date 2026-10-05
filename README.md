@@ -15,7 +15,7 @@ vectors in [`receipt-verify-vectors/`](receipt-verify-vectors/), minted by the r
 ```
 curl -s https://control-api.regentprotocol.org/v1/control/.well-known/jwks.json > jwks-2026-09.json
 regent-verify @receipt.txt --jwks jwks-2026-09.json --request request.json \
-  --mandate mandate-v2-reveal.json --policy policy-v3-reveal.json
+  --mandate mandate-v2-reveal.json --policy policy-v3-reveal.json --counterparty-jwks get4agent-jwks.json
 ```
 
 What a verification proves:
@@ -27,6 +27,7 @@ What a verification proves:
 | `args_hash` | the token authorised this exact request (tool, action, resource, args) and nothing else |
 | mandate reveal (`terms-v2`) | the owner's revealed mandate version (snapshot + salt) opens the receipt's `mandate_hash` |
 | policy reveal (`policy-v1`) | the organisation's revealed policy version (text + profile + salt) opens `policy_hash`; starter-pack decisions need only the public text |
+| counterparty confirmation | the settlement confirmation the counterparty (merchant, PSP, custodian) signed over the same decision is embedded in the receipt (`confirmation`); pass the counterparty's JWKS (`--counterparty-jwks`) to re-verify it and compare it with the receipt's figures: two signatures over the same facts, checked offline. `settlement_source: agent` receipts carry none |
 
 Ceilings never ride in a token: the receipt carries a version and a salted commitment, the
 owner reveals the terms to whoever needs them (an insurer, an auditor), and this verifier checks

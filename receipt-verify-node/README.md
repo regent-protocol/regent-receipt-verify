@@ -6,7 +6,7 @@ you saved while the issuer was reachable. Zero dependencies (Node ≥ 18, `node:
 ```
 npm i @regent-protocol/receipt-verify
 curl -s https://control-api.regentprotocol.org/v1/control/.well-known/jwks.json > jwks-2026-09.json
-npx regent-verify @receipt.txt --jwks jwks-2026-09.json --request request.json --mandate mandate-v2-reveal.json --policy policy-v3-reveal.json
+npx regent-verify @receipt.txt --jwks jwks-2026-09.json --request request.json --mandate mandate-v2-reveal.json --policy policy-v3-reveal.json --counterparty-jwks get4agent-jwks.json
 ```
 
 ```js
@@ -18,7 +18,10 @@ res.valid; res.kind; res.claims; res.argsHashMatch; res.mandateMatch; res.policy
 Checks: RS256 signature against the JWKS (`kid`), token kind (receipt / allow / budget), expiry
 (a note for allow tokens, an error for receipts past their 10-year evidence period), request
 binding (`args_hash` over canonical JSON of tool, action, resource, args), mandate reveal
-(`terms-v2`) and policy reveal (`policy-v1`; starter-pack decisions need only the public text).
+(`terms-v2`), policy reveal (`policy-v1`; starter-pack decisions need only the public text) and, with
+`--counterparty-jwks`, the counterparty's settlement confirmation embedded in the receipt (`checkConfirmation`:
+ES256 / EdDSA / RS256 / PS256 against the counterparty's JWKS, then decision, status, amount and hash
+compared with the receipt).
 Pass several `--jwks` files for key rotation. Exit 0 when the signature verifies and every supplied
 check matches.
 

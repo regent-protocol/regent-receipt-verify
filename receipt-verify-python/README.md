@@ -7,7 +7,7 @@ you saved while the issuer was reachable. Nothing calls the network. One depende
 ```
 pip install regent-receipt-verify
 curl -s https://control-api.regentprotocol.org/v1/control/.well-known/jwks.json > jwks-2026-09.json   # save it now, keep it with the receipts
-regent-verify @receipt.txt --jwks jwks-2026-09.json --request request.json --mandate mandate-v2-reveal.json --policy policy-v3-reveal.json
+regent-verify @receipt.txt --jwks jwks-2026-09.json --request request.json --mandate mandate-v2-reveal.json --policy policy-v3-reveal.json --counterparty-jwks get4agent-jwks.json
 ```
 
 ```python
@@ -27,6 +27,7 @@ What it proves:
 | `args_hash_match` | the token authorised this exact request (tool, action, resource, args) and nothing else |
 | `mandate_match` | the owner's revealed mandate version (snapshot + salt, `terms-v2`) opens the receipt's `mandate_hash` |
 | `policy_match` | the organisation's revealed policy version (text + profile + salt, `policy-v1`) opens `policy_hash`; starter-pack decisions need only the public text |
+| `confirmation_match` | the settlement confirmation the counterparty (merchant, PSP, custodian) signed over the same decision, embedded in the receipt, re-verified against the counterparty's own JWKS and compared with the receipt's figures: two signatures over the same facts, checked offline. `settlement_source: agent` receipts have none |
 
 Key rotation: pass `--jwks` several times (every JWKS you saved). Exit code 0 when the signature
 verifies and every supplied check matches.

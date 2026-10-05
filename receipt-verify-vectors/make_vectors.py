@@ -55,6 +55,36 @@ starter_receipt = issuer.issue_receipt(decision_id="dec_s", agent_id="agent_abc"
 budget_token, _, _ = issuer.issue_budget_token(agent_id="agent_abc", resource="https://merchant.example", cnf_jwk={"kty": "OKP"},
                                                budget={"amount": "10.00", "currency": "KZT"}, mandate_id=snapshot["mandate_id"], ttl_seconds=600)
 wrong_key = other.issue_receipt(decision_id="dec_w", agent_id="agent_abc", status="success")
+
+# A receipt whose settlement a counterparty (merchant) confirmed with its own signature (P-1).
+# Two counterparty keys so both algorithms get4agent-class issuers use are exercised: Ed25519
+# (get4agent's issuer key) and P-256. A stranger holds a different key under the SAME kid.
+import hashlib  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519  # noqa: E402
+
+CP_ISS = "https://merchant.example"
+iat = pyjwt.decode(allow_token, options={"verify_signature": False, "verify_aud": False})["iat"]
+cp_ed = ed25519.Ed25519PrivateKey.generate()
+cp_ed_jwk = pyjwt.algorithms.OKPAlgorithm.to_jwk(cp_ed.public_key(), as_dict=True); cp_ed_jwk["kid"] = "cp-ed25519"
+cp_ec = ec.generate_private_key(ec.SECP256R1())
+cp_ec_jwk = pyjwt.algorithms.ECAlgorithm.to_jwk(cp_ec.public_key(), as_dict=True); cp_ec_jwk["kid"] = "cp-p256"
+stranger = ed25519.Ed25519PrivateKey.generate()
+stranger_jwk = pyjwt.algorithms.OKPAlgorithm.to_jwk(stranger.public_key(), as_dict=True); stranger_jwk["kid"] = "cp-ed25519"
+conf_payload = {"iss": CP_ISS, "iat": iat, "exp": iat + 7 * 86400, "decision_id": "dec_0123456789ab", "status": "success",
+                "amount": 400.0, "currency": "KZT", "payee": "KYC KZ", "ref": "ord_1", "kind": "merchant"}
+
+
+def _confirmed_receipt(key, alg, kid):
+    conf = pyjwt.encode(conf_payload, key, algorithm=alg, headers={"kid": kid, "typ": "settlement-confirmation+jwt"})
+    facts = {"confirmed_by": CP_ISS, "confirmation_kid": kid, "confirmation_hash": hashlib.sha256(conf.encode()).hexdigest(),
+             "confirmation": conf, "confirmation_ref": "ord_1", "confirmation_kind": "merchant"}
+    return issuer.issue_receipt(status="success", mismatch=False, settlement_source="counterparty", confirmation=facts,
+                                agent_report_mismatch=False, tool="stripe", action="charge.create",
+                                **{k: v for k, v in common.items() if k not in ("tool", "action")})
+
+
+confirmed_ed = _confirmed_receipt(cp_ed, "EdDSA", "cp-ed25519")
+confirmed_ec = _confirmed_receipt(cp_ec, "ES256", "cp-p256")
 h, p, s = receipt.split(".")
 tampered = h + "." + p[:-2] + ("AA" if p[-2:] != "AA" else "BB") + "." + s
 iat = pyjwt.decode(allow_token, options={"verify_signature": False, "verify_aud": False})["iat"]
@@ -71,7 +101,13 @@ vectors = {
     "mandate_reveal": mandate_reveal,
     "policy_reveal": policy_reveal,
     "starter_text": starter_text,
+    "counterparty_jwks": {"keys": [cp_ed_jwk, cp_ec_jwk]},
+    "stranger_jwks": {"keys": [stranger_jwk]},
     "cases": {
+        "receipt_confirmed": {"token": confirmed_ed, "expect": {"kind": "receipt", "signature_valid": True, "confirmation_match": True,
+                                                                "confirmation_alg": "EdDSA", "settlement_source": "counterparty"}},
+        "receipt_confirmed_es256": {"token": confirmed_ec, "expect": {"kind": "receipt", "signature_valid": True, "confirmation_match": True,
+                                                                      "confirmation_alg": "ES256"}},
         "receipt": {"token": receipt, "expect": {"kind": "receipt", "signature_valid": True, "expired": False,
                                                  "args_hash_match": True, "mandate_match": True, "policy_match": True}},
         "allow": {"token": allow_token, "expect": {"kind": "allow", "signature_valid": True, "expired": False,

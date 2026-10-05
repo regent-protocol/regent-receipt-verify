@@ -5,7 +5,8 @@ import os
 import pytest
 
 from regent_receipt_verify import (
-    canonical_args_hash, check_mandate_reveal, check_policy_reveal, check_request_binding, verify, verify_token,
+    canonical_args_hash, check_confirmation, check_mandate_reveal, check_policy_reveal, check_request_binding, verify,
+    verify_token,
 )
 from regent_receipt_verify.cli import main
 
@@ -93,3 +94,61 @@ def test_cli(tmp_path, capsys):
     assert rc == 1 and json.loads(capsys.readouterr().out)["signature_valid"] is False
     bad = tmp_path / "bad.json"; bad.write_text(json.dumps(V["wrong_request"]))
     assert main([V["cases"]["allow"]["token"], "--jwks", str(jw), "--request", str(bad), "--now", str(NOW)]) == 1
+
+
+# ── counterparty settlement confirmation (receipts minted with P-1) ────────────
+
+@pytest.mark.parametrize("name", ["receipt_confirmed", "receipt_confirmed_es256"])
+def test_counterparty_confirmation_verifies_against_its_jwks(name):
+    case = V["cases"][name]
+    res = verify(case["token"], V["jwks"], counterparty_jwks=V["counterparty_jwks"], now=NOW)
+    assert res.valid and res.claims["settlement_source"] == "counterparty"
+    assert res.confirmation_match is True and res.confirmation_errors == []
+    assert res.confirmation["iss"] == res.claims["confirmed_by"] == "https://merchant.example"
+    assert res.confirmation["decision_id"] == res.claims["decision_id"]
+    assert res.confirmation["amount"] == res.claims["amount"] and res.confirmation["ref"] == "ord_1"
+    # the embedded JWS really is the one the receipt cites
+    import hashlib
+    assert hashlib.sha256(res.claims["confirmation"].encode()).hexdigest() == res.claims["confirmation_hash"]
+
+
+def test_counterparty_confirmation_fails_with_a_strangers_key():
+    case = V["cases"]["receipt_confirmed"]
+    res = verify(case["token"], V["jwks"], counterparty_jwks=V["stranger_jwks"], now=NOW)
+    assert res.valid  # Regent's signature is fine; only the counterparty check fails
+    assert res.confirmation_match is False and res.confirmation is None
+    assert any("does not verify" in e for e in res.confirmation_errors)
+    # an unknown kid is reported, not guessed
+    res2 = verify(case["token"], V["jwks"], counterparty_jwks={"keys": []}, now=NOW)
+    assert res2.confirmation_match is False and any("no key with kid" in e for e in res2.confirmation_errors)
+
+
+def test_agent_reported_receipt_has_no_confirmation_to_check():
+    res = verify(V["cases"]["receipt"]["token"], V["jwks"], counterparty_jwks=V["counterparty_jwks"], now=NOW)
+    assert res.valid and res.confirmation_match is False
+    assert any("agent-reported" in e for e in res.confirmation_errors)
+
+
+def test_a_confirmation_that_disagrees_with_the_receipt_is_caught():
+    """Same signed confirmation, but receipt claims that say something else: the check must notice.
+    (Such a receipt would fail Regent's signature anyway, so the claims are compared directly.)"""
+    case = V["cases"]["receipt_confirmed"]
+    claims = dict(verify_token(case["token"], V["jwks"], now=NOW).claims)
+    assert check_confirmation(claims, V["counterparty_jwks"]).ok
+    assert not check_confirmation({**claims, "amount": 401.0}, V["counterparty_jwks"]).ok
+    assert not check_confirmation({**claims, "decision_id": "dec_other"}, V["counterparty_jwks"]).ok
+    assert not check_confirmation({**claims, "status": "failed"}, V["counterparty_jwks"]).ok
+    assert not check_confirmation({**claims, "confirmation_hash": "00" * 32}, V["counterparty_jwks"]).ok
+    assert not check_confirmation({**claims, "confirmed_by": "https://other.example"}, V["counterparty_jwks"]).ok
+
+
+def test_cli_reports_the_counterparty(tmp_path, capsys):
+    case = V["cases"]["receipt_confirmed"]
+    jwks = tmp_path / "jwks.json"; jwks.write_text(json.dumps(V["jwks"]))
+    cp = tmp_path / "cp.json"; cp.write_text(json.dumps(V["counterparty_jwks"]))
+    assert main([case["token"], "--jwks", str(jwks), "--counterparty-jwks", str(cp), "--now", str(NOW)]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("VALID") and "counterparty confirmation: MATCH" in out and "confirmed by https://merchant.example" in out
+    stranger = tmp_path / "stranger.json"; stranger.write_text(json.dumps(V["stranger_jwks"]))
+    assert main([case["token"], "--jwks", str(jwks), "--counterparty-jwks", str(stranger), "--now", str(NOW)]) == 1
+    assert "counterparty confirmation: NO MATCH" in capsys.readouterr().out

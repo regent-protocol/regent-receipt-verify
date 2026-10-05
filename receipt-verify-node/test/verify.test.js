@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { verify, verifyToken, canonicalArgsHash, checkMandateReveal, checkPolicyReveal, checkRequestBinding } from "../index.js";
+import { verify, verifyToken, canonicalArgsHash, checkConfirmation, checkMandateReveal, checkPolicyReveal, checkRequestBinding } from "../index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const V = JSON.parse(readFileSync(join(here, "..", "..", "receipt-verify-vectors", "vectors.json"), "utf8"));
@@ -71,4 +71,43 @@ test("cli", () => {
     "--mandate", f("m.json", V.mandate_reveal), "--policy", f("p.json", V.policy_reveal), "--now", String(NOW)], { encoding: "utf8" });
   assert.ok(out.startsWith("VALID")); assert.ok(out.includes("mandate reveal: MATCH")); assert.ok(out.includes("policy reveal: MATCH"));
   assert.throws(() => execFileSync("node", [join(here, "..", "cli.js"), V.cases.tampered.token, "--jwks", f("jwks.json", V.jwks), "--now", String(NOW)], { stdio: "pipe" }));
+});
+
+// ── counterparty settlement confirmation (receipts minted with P-1) ────────────
+
+for (const name of ["receipt_confirmed", "receipt_confirmed_es256"]) {
+  test(`counterparty confirmation verifies against its JWKS: ${name}`, () => {
+    const res = verify(V.cases[name].token, V.jwks, { counterpartyJwks: V.counterparty_jwks, now: NOW });
+    assert.equal(res.valid, true); assert.equal(res.claims.settlement_source, "counterparty");
+    assert.equal(res.confirmationMatch, true); assert.deepEqual(res.confirmationErrors, []);
+    assert.equal(res.confirmation.iss, res.claims.confirmed_by); assert.equal(res.confirmation.decision_id, res.claims.decision_id);
+    assert.equal(res.confirmation.amount, res.claims.amount); assert.equal(res.confirmation.ref, "ord_1");
+  });
+}
+
+test("counterparty confirmation fails with a stranger's key, an empty JWKS, or an agent-reported receipt", () => {
+  const stranger = verify(V.cases.receipt_confirmed.token, V.jwks, { counterpartyJwks: V.stranger_jwks, now: NOW });
+  assert.equal(stranger.valid, true); assert.equal(stranger.confirmationMatch, false); assert.equal(stranger.confirmation, null);
+  assert.ok(stranger.confirmationErrors.some((e) => e.includes("does not verify")));
+  const none = verify(V.cases.receipt_confirmed.token, V.jwks, { counterpartyJwks: { keys: [] }, now: NOW });
+  assert.equal(none.confirmationMatch, false); assert.ok(none.confirmationErrors.some((e) => e.includes("no key with kid")));
+  const agent = verify(V.cases.receipt.token, V.jwks, { counterpartyJwks: V.counterparty_jwks, now: NOW });
+  assert.equal(agent.confirmationMatch, false); assert.ok(agent.confirmationErrors.some((e) => e.includes("agent-reported")));
+});
+
+test("a confirmation that disagrees with the receipt is caught", () => {
+  const claims = verifyToken(V.cases.receipt_confirmed.token, V.jwks, { now: NOW }).claims;
+  assert.equal(checkConfirmation(claims, V.counterparty_jwks).ok, true);
+  for (const bad of [{ amount: 401 }, { decision_id: "dec_other" }, { status: "failed" }, { confirmation_hash: "00".repeat(32) }, { confirmed_by: "https://other.example" }])
+    assert.equal(checkConfirmation({ ...claims, ...bad }, V.counterparty_jwks).ok, false, JSON.stringify(bad));
+});
+
+test("cli reports the counterparty", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rv-"));
+  const f = (n, v) => { const p = join(dir, n); writeFileSync(p, JSON.stringify(v)); return p; };
+  const out = execFileSync("node", [join(here, "..", "cli.js"), V.cases.receipt_confirmed.token, "--jwks", f("jwks.json", V.jwks),
+    "--counterparty-jwks", f("cp.json", V.counterparty_jwks), "--now", String(NOW)], { encoding: "utf8" });
+  assert.ok(out.startsWith("VALID")); assert.ok(out.includes("counterparty confirmation: MATCH")); assert.ok(out.includes("confirmed by https://merchant.example"));
+  assert.throws(() => execFileSync("node", [join(here, "..", "cli.js"), V.cases.receipt_confirmed.token, "--jwks", f("jwks.json", V.jwks),
+    "--counterparty-jwks", f("stranger.json", V.stranger_jwks), "--now", String(NOW)], { stdio: "pipe" }));
 });

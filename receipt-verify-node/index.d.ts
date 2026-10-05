@@ -1,5 +1,5 @@
 export const VERSION: string;
-export interface Jwk { kty: string; kid?: string; n?: string; e?: string; alg?: string; use?: string }
+export interface Jwk { kty: string; kid?: string; n?: string; e?: string; crv?: string; x?: string; y?: string; alg?: string; use?: string }
 export interface Jwks { keys: Jwk[] }
 export type JwksInput = Jwks | Jwk | Array<Jwks | Jwk>;
 export interface RequestInput { tool: string; action: string; resource?: string | null; args?: Record<string, unknown> }
@@ -24,9 +24,17 @@ export interface VerificationResult {
   argsHashMatch: boolean | null;
   mandateMatch: boolean | null;
   policyMatch: boolean | null;
+  /** the counterparty's settlement confirmation embedded in the receipt, re-verified against its JWKS (null when none was supplied) */
+  confirmationMatch: boolean | null;
+  confirmationErrors: string[];
+  confirmation: Record<string, unknown> | null;
 }
+export interface ConfirmationCheck { ok: boolean; errors: string[]; issuer: string | null; kid: string | null; claims: Record<string, unknown> }
+export const CONFIRMATION_TYP: string;
+export const CONFIRMATION_ALGS: string[];
+export function checkConfirmation(claims: Record<string, unknown>, counterpartyJwks: JwksInput, opts?: { now?: number }): ConfirmationCheck;
 export function verifyToken(token: string, jwks: JwksInput, opts?: { now?: number; issuer?: string | null }): VerificationResult;
-export function verify(token: string, jwks: JwksInput, opts?: { request?: RequestInput; mandateReveal?: MandateReveal; policyReveal?: PolicyReveal | string; now?: number; issuer?: string | null }): VerificationResult;
+export function verify(token: string, jwks: JwksInput, opts?: { request?: RequestInput; mandateReveal?: MandateReveal; policyReveal?: PolicyReveal | string; counterpartyJwks?: JwksInput; now?: number; issuer?: string | null }): VerificationResult;
 export function canonicalArgsHash(tool: string, action: string, resource: string | null | undefined, args: Record<string, unknown> | undefined): string;
 export function checkRequestBinding(claims: Record<string, unknown>, request: RequestInput): boolean;
 export const MANDATE_FIELDS: string[];
