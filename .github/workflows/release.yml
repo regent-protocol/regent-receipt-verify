@@ -3,8 +3,10 @@ name: release
 # Tag v* → build, then publish. Both registries use OIDC trusted publishing, no tokens anywhere:
 # PyPI's trusted publisher names this repo, this workflow and the `pypi` environment; npm's
 # trusted publisher (package settings on npmjs.com) names this repo and this workflow file.
-# npm trusted publishing needs npm >= 11.5.1, hence the npm upgrade step; provenance
-# attestations are generated automatically.
+# npm side: the trusted publisher is stage-only (npm's default and recommendation), so CI
+# STAGES the version with provenance and a maintainer approves it on npmjs.com (2FA) or with
+# `npm stage approve <stage-id>` — the version goes live only after that human step.
+# Needs npm >= 11.15 for `npm stage`, hence the npm upgrade step.
 
 on:
   push:
@@ -43,6 +45,8 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true  # a re-run of a tag (e.g. to redo the npm half) must not fail here
 
   publish-npm:
     needs: build
@@ -56,8 +60,8 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: npm >= 11.5.1 (trusted publishing)
+      - name: npm >= 11.15 (trusted publishing + staged publish)
         run: npm install -g npm@latest && npm --version
-      - name: publish
-        run: npm publish --access public
+      - name: stage publish (a maintainer approves the staged version on npmjs.com)
+        run: npm stage publish --access public --provenance
         working-directory: receipt-verify-node
