@@ -1,9 +1,10 @@
 name: release
 
-# Tag v* → build, then publish. PyPI uses OIDC trusted publishing (no tokens; the project's
-# pending publisher must name this repo, this workflow and the `pypi` environment). npm uses
-# the NPM_TOKEN repository secret (automation token) with provenance; the job is skipped when
-# the secret is absent so a PyPI-only release still works.
+# Tag v* → build, then publish. Both registries use OIDC trusted publishing, no tokens anywhere:
+# PyPI's trusted publisher names this repo, this workflow and the `pypi` environment; npm's
+# trusted publisher (package settings on npmjs.com) names this repo and this workflow file.
+# npm trusted publishing needs npm >= 11.5.1, hence the npm upgrade step; provenance
+# attestations are generated automatically.
 
 on:
   push:
@@ -47,7 +48,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # provenance attestation
+      id-token: write  # OIDC trusted publishing + provenance attestation
       contents: read
     steps:
       - uses: actions/checkout@v4
@@ -55,10 +56,8 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      - name: npm >= 11.5.1 (trusted publishing)
+        run: npm install -g npm@latest && npm --version
       - name: publish
-        if: ${{ env.NPM_TOKEN != '' }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         working-directory: receipt-verify-node
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

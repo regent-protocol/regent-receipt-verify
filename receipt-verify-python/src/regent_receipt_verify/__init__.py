@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "VerificationResult", "ConfirmationCheck", "verify_token", "verify", "canonical_args_hash",
     "check_request_binding", "mandate_commitment", "check_mandate_reveal", "policy_commitment",
