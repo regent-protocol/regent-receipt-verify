@@ -39,7 +39,7 @@ console.log(`${res.valid ? "VALID" : "INVALID"} — ${res.kind} signed by ${c.is
 for (const e of res.errors) console.log(`  error: ${e}`);
 for (const w of res.warnings) console.log(`  note: ${w}`);
 if (res.signatureValid) {
-  for (const k of ["decision_id", "status", "sub", "amount", "currency", "payee", "mandate_id", "mandate_version", "mandate_hash",
+  for (const k of ["decision_id", "status", "environment", "sub", "amount", "currency", "payee", "mandate_id", "mandate_version", "mandate_hash",
                    "policy_source", "policy_version", "policy_hash", "risk_model", "tool", "action", "scope", "args_hash",
                    "settlement_mismatch", "settlement_source", "confirmed_by", "confirmation_kid", "confirmation_ref", "confirmation_kind",
                    "agent_report_mismatch", "jti", "iat", "exp"]) if (k in c) console.log(`  ${k}: ${c[k]}`);
