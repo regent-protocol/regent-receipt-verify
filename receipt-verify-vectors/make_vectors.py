@@ -120,5 +120,119 @@ vectors = {
     },
 }
 out = os.path.join(HERE, "vectors.json")
+# ── Evidence bundle (backlog 28): minted with the REAL checkpoint signer and the real
+# Merkle rules of api-audit, around a receipt from the real issuer. ─────────────────────
+sys.path.insert(0, os.path.join(ROOT, "apps/api-audit/src"))
+import uuid as _uuid  # noqa: E402
+
+from api_audit.models import AuditBatch  # noqa: E402
+from api_audit.services.bundle import canonical_payload  # noqa: E402
+from api_audit.services.chain import epoch_tree  # noqa: E402
+from api_audit.services.checkpoint import CheckpointSigner, claims_for  # noqa: E402
+from api_audit.services.merkle import build_merkle_tree  # noqa: E402
+import hashlib as _hashlib  # noqa: E402
+
+DEC = "dec_b0b0b0b0b0b0"
+b_receipt = issuer.issue_receipt(decision_id=DEC, agent_id="agent_abc", status="success", amount=6.61, currency="USD",
+                                 payee="agentcard", mandate_id=snapshot["mandate_id"], tool="agentcard_buy",
+                                 action="POST /buy", args_hash=ah, mismatch=False, environment="production")
+b_payloads = [
+    (f"ctrl-{DEC}", {"decision_id": DEC, "decision": "allow", "code": "OK", "tool": "agentcard_buy",
+                     "action": "POST /buy", "amount": 6.61, "amount_usd": 100.0, "currency": "USD", "intent": "Kaffee ☕"}),
+    (f"ctrl-{DEC}-settle-agentcard_webhook", {"decision_id": DEC, "status": "completed", "settled_amount": 6.61,
+                                              "approved_amount": 6.61, "mandate_reconciled": True, "amount_mismatch": False}),
+    (f"ctrl-{DEC}-receipt", {"decision_id": DEC, "org_id": ORG, "receipt": b_receipt, "kid": issuer.kid,
+                             "receipt_jti": "jti-b", "status": "success", "amount": 6.61, "currency": "USD"}),
+    ("ctrl-dec_other", {"decision_id": "dec_other", "decision": "deny"}),
+]
+b_canon = [canonical_payload(pl) for _, pl in b_payloads]
+b_hashes = ["0x" + _hashlib.sha256(c.encode()).hexdigest() for c in b_canon]
+b_root, b_proofs = build_merkle_tree(b_hashes)
+prev_canon = canonical_payload({"x": 1})
+prev_batch_root = "0x" + _hashlib.sha256(prev_canon.encode()).hexdigest()   # one-event batch: root IS the leaf
+prev_head = "0x" + "22" * 32
+head = "0x" + _hashlib.sha256(bytes.fromhex(prev_head[2:]) + bytes.fromhex(b_root[2:] if b_root.startswith("0x") else b_root)
+                              + (7).to_bytes(8, "little")).hexdigest()
+ck_signer = CheckpointSigner.ephemeral(issuer="https://api.regentprotocol.org/v1/audit")
+batch_id = _uuid.uuid4()
+batch = AuditBatch(id=batch_id, status="anchored", merkle_root=b_root, event_count=4, seq=7,
+                   sealed_at=datetime.now(tz=UTC), chain_tx="5chainTxSignature", chain_head=head,
+                   chain_appended_at=datetime.now(tz=UTC), arbitrum_tx_hash="legacyAnchorSig")
+ck = ck_signer.sign(claims_for(batch, prev_head, issuer=ck_signer.issuer,
+                               program_id="8N1PpbJZKmvJjG86XWpP82XrWzp8HY5FHZuzyQTgjJas", cluster="devnet"))
+prev_batch = AuditBatch(id=_uuid.uuid4(), status="anchored", merkle_root=prev_batch_root, event_count=1, seq=6,
+                        chain_tx="4prevTx", chain_head=prev_head, chain_appended_at=datetime.now(tz=UTC))
+ck_prev = ck_signer.sign(claims_for(prev_batch, "0x" + "00" * 32, issuer=ck_signer.issuer,
+                                    program_id="8N1PpbJZKmvJjG86XWpP82XrWzp8HY5FHZuzyQTgjJas", cluster="devnet"))
+ep_root, ep_proofs = epoch_tree([prev_batch_root, b_root])
+
+
+def _b_event(i, *, batch_root=b_root, checkpoint=ck, seq=7):
+    eid, pl = b_payloads[i]
+    return {"event_id": eid, "agent_id": "agent_abc", "event_type": "control.decision", "received_at": "2026-10-13T00:00:00Z",
+            "status": "anchored", "payload": pl, "payload_canonical": b_canon[i], "payload_hash": b_hashes[i],
+            "payload_hash_recomputed": True, "prev_hash": b_hashes[i - 1] if i else None,
+            "batch": {"batch_id": str(batch_id), "seq": seq, "root": batch_root, "event_count": 4, "merkle_index": i,
+                      "merkle_proof": b_proofs[i], "sealed_at": "2026-10-13T00:00:01Z", "legacy_anchor_tx": "legacyAnchorSig",
+                      "chain_tx": "5chainTxSignature", "chain_head": head, "chain_appended_at": "2026-10-13T00:00:02Z",
+                      "checkpoint": checkpoint, "checkpoint_kid": ck_signer.kid},
+            "epoch": {"epoch_index": 3, "first_seq": 6, "last_seq": 7, "root": ep_root, "leaf_index": 1, "proof": ep_proofs[1],
+                      "status": "anchored", "tx": "epochTxSig", "anchored_at": "2026-10-13T01:00:00Z", "ots_status": "pending",
+                      "ots_proof_b64": None}}
+
+
+prev_event = {"event_id": "ctrl-dec_prev", "agent_id": "agent_abc", "event_type": "control.decision",
+              "received_at": "2026-10-12T00:00:00Z", "status": "anchored", "payload": {"x": 1},
+              "payload_canonical": prev_canon, "payload_hash": prev_batch_root, "payload_hash_recomputed": True,
+              "prev_hash": None,
+              "batch": {"batch_id": str(prev_batch.id), "seq": 6, "root": prev_batch_root, "event_count": 1, "merkle_index": 0,
+                        "merkle_proof": [], "sealed_at": None, "legacy_anchor_tx": None, "chain_tx": "4prevTx",
+                        "chain_head": prev_head, "chain_appended_at": "2026-10-12T00:00:02Z", "checkpoint": ck_prev,
+                        "checkpoint_kid": ck_signer.kid},
+              "epoch": {"epoch_index": 3, "first_seq": 6, "last_seq": 7, "root": ep_root, "leaf_index": 0, "proof": ep_proofs[0],
+                        "status": "anchored", "tx": "epochTxSig", "anchored_at": "2026-10-13T01:00:00Z", "ots_status": "pending",
+                        "ots_proof_b64": None}}
+
+
+def _bundle(events, receipt=True):
+    events = json.loads(json.dumps(events))   # every case gets its own objects to tamper with
+    return {"bundle_version": "regent-evidence-bundle/1", "generated_at": "2026-10-13T02:00:00Z", "decision_id": DEC,
+            "issuer": {"audit": ck_signer.issuer, "control": "regent-control"},
+            "programs": {"audit_anchor": "8N1PpbJZKmvJjG86XWpP82XrWzp8HY5FHZuzyQTgjJas"}, "cluster": "devnet",
+            "keys": {"checkpoint_jwks": ck_signer.jwks(), "receipt_jwks": issuer.jwks()}, "events": events,
+            "receipt": {"token": b_receipt, "kid": issuer.kid, "jti": "jti-b", "event_id": f"ctrl-{DEC}-receipt"} if receipt else None}
+
+
+good = _bundle([_b_event(0), _b_event(1), _b_event(2)])
+good_with_prev = _bundle([prev_event, _b_event(0), _b_event(2)])
+tampered_payload = _bundle([_b_event(0), _b_event(2)])
+tampered_payload["events"][0]["payload"]["amount"] = 6610.0      # payload no longer matches its canonical bytes
+tampered_canonical = _bundle([_b_event(0), _b_event(2)])
+tampered_canonical["events"][0]["payload_canonical"] = tampered_canonical["events"][0]["payload_canonical"].replace("6.61", "6.62")
+wrong_batch_root = _bundle([_b_event(0, batch_root="0x" + "ab" * 32), _b_event(2)])
+other_ck = CheckpointSigner.ephemeral(issuer=ck_signer.issuer)
+foreign_checkpoint = _bundle([_b_event(0, checkpoint=other_ck.sign(claims_for(batch, prev_head, issuer=ck_signer.issuer,
+                                                                             program_id="p", cluster="devnet"))), _b_event(2)])
+swapped_receipt = _bundle([_b_event(0), _b_event(2)])
+swapped_receipt["receipt"]["token"] = receipt      # a real receipt, but not the one anchored in the trail
+ck_broken = ck_signer.sign(claims_for(batch, "0x" + "33" * 32, issuer=ck_signer.issuer, program_id="p", cluster="devnet"))
+broken_link = _bundle([prev_event, _b_event(0, checkpoint=ck_broken), _b_event(2, checkpoint=ck_broken)])
+conflicting_checkpoints = _bundle([_b_event(0), _b_event(2, checkpoint=ck_broken)])
+
+vectors["bundle"] = {
+    "checkpoint_jwks": ck_signer.jwks(), "other_checkpoint_jwks": other_ck.jwks(), "decision_id": DEC,
+    "cases": {
+        "good": {"bundle": good, "valid": True, "receipt_valid": True, "receipt_anchored": True, "links": None},
+        "good_with_prev": {"bundle": good_with_prev, "valid": True, "receipt_valid": True, "receipt_anchored": True, "links": True},
+        "tampered_payload": {"bundle": tampered_payload, "valid": False},
+        "tampered_canonical": {"bundle": tampered_canonical, "valid": False},
+        "wrong_batch_root": {"bundle": wrong_batch_root, "valid": False},
+        "foreign_checkpoint": {"bundle": foreign_checkpoint, "valid": False},
+        "swapped_receipt": {"bundle": swapped_receipt, "valid": False},
+        "broken_link": {"bundle": broken_link, "valid": False, "links": False},
+        "conflicting_checkpoints": {"bundle": conflicting_checkpoints, "valid": False},
+    },
+}
+
 json.dump(vectors, open(out, "w"), indent=1)
 print("wrote", out, "cases:", list(vectors["cases"]))

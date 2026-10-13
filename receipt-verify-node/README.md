@@ -28,3 +28,38 @@ check matches.
 Note on numbers: `args_hash` is computed over the request as the gate parsed it (Python JSON). A
 JSON value written as `40.0` is `40.0` there and `40` in JavaScript; pass amounts as integers or
 strings when you need to reproduce the hash from JavaScript.
+
+## Evidence bundles (0.4.0)
+
+A bundle is one JSON document from the console ("Evidence bundle" on a decision or an audit
+event) or from `GET /v1/organizations/{org}/decisions/{id}/bundle`. It carries every audit
+event of a decision with the exact bytes that were hashed, the Merkle proof to the batch root,
+Regent's signed checkpoint over that root and its chain position, the epoch proof, the
+OpenTimestamps proof, the retained receipt and the keys.
+
+```
+npx regent-verify bundle regent-evidence-dec_7f301d041e9f.json
+npx regent-verify bundle regent-evidence-dec_7f301d041e9f.json --jwks jwks-2026-09.json --checkpoint-jwks audit-jwks.json
+npx regent-verify bundle regent-evidence-dec_7f301d041e9f.json --rpc https://api.mainnet-beta.solana.com
+```
+
+```js
+import { verifyBundle } from "@regent-protocol/receipt-verify";
+const res = await verifyBundle(bundle, { receiptJwks: savedReceiptJwks, checkpointJwks: savedAuditJwks,
+                                         rpc: "https://api.devnet.solana.com" });   // rpc is optional
+res.valid, res.events, res.receipt_valid, res.receipt_anchored, res.links_ok, res.rpc_ok
+```
+
+| check | meaning |
+|---|---|
+| canonical bytes | `sha256(payload_canonical) == payload_hash`, and the bytes parse to the payload |
+| batch proof | payload hash → Merkle proof → batch root |
+| checkpoint | Regent's RS256 statement (`typ checkpoint+jwt`) names this batch: id, seq, root, head |
+| epoch proof | batch root → epoch proof → epoch root |
+| receipt | verifies, names the bundle's decision, and is byte-for-byte the one inside the anchored receipt event |
+| links | consecutive checkpoints chain (`prev_head` of N == `head` of N-1); one seq, one checkpoint |
+| on-chain (`--rpc`) | the append and anchor transactions succeeded and carry the root in an instruction to the audit program |
+
+Keys default to the ones inside the bundle, which proves consistency; pass the JWKS you saved
+(`--jwks`, `--checkpoint-jwks`) to prove provenance. The checkpoint JWKS is public at
+`https://api.regentprotocol.org/v1/audit/.well-known/jwks.json`.

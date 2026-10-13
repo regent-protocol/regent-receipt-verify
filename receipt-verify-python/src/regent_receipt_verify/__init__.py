@@ -22,11 +22,11 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-__version__ = "0.2.2"
+__version__ = "0.4.0"
 __all__ = [
     "VerificationResult", "ConfirmationCheck", "verify_token", "verify", "canonical_args_hash",
     "check_request_binding", "mandate_commitment", "check_mandate_reveal", "policy_commitment",
-    "check_policy_reveal", "check_confirmation",
+    "check_policy_reveal", "check_confirmation", "verify_bundle", "BundleResult",
 ]
 
 
@@ -390,3 +390,14 @@ def verify(token: str, jwks: Any, *, request: dict[str, Any] | None = None, mand
         res.confirmation_match, res.confirmation_errors = c.ok, c.errors
         res.confirmation = c.claims if c.ok else None
     return res
+
+
+def verify_bundle(bundle, **kw):  # noqa: ANN001, ANN201 — thin re-export, see bundle.py
+    """Verify an evidence bundle (regent-evidence-bundle/1). See `regent_receipt_verify.bundle`."""
+    from .bundle import verify_bundle as _vb
+    return _vb(bundle, **kw)
+
+
+def BundleResult():  # noqa: N802 — re-export for `from regent_receipt_verify import BundleResult`
+    from .bundle import BundleResult as _BR
+    return _BR

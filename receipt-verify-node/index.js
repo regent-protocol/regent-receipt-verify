@@ -4,7 +4,7 @@
 // the same request hash (sha256 over canonical JSON of {tool, action, resource, args}).
 import { constants, createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from "node:crypto";
 
-export const VERSION = "0.2.1";
+export const VERSION = "0.4.0";
 
 const b64url = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
@@ -193,3 +193,5 @@ export function verify(token, jwks, { request, mandateReveal, policyReveal, coun
   }
   return res;
 }
+
+export { verifyBundle, checkTxCarriesRoot, merkleRootFrom, BUNDLE_VERSION } from "./bundle.js";

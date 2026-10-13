@@ -35,3 +35,11 @@ the two match. Save the JWKS with the receipts; keys rotate, and every JWKS you 
 with `--jwks`.
 
 Licence: Apache-2.0. Issues and pull requests welcome.
+
+## Evidence bundles (0.4.0)
+
+`regent-verify bundle FILE [--jwks receipt-jwks.json] [--checkpoint-jwks audit-jwks.json] [--rpc URL]`
+verifies a whole evidence bundle offline: canonical bytes, batch proof, Regent's signed checkpoint,
+epoch proof, the retained receipt and the links between checkpoints; with `--rpc` it also fetches
+the append and anchor transactions from the network and checks that the root is in them. Same
+checks, same vectors, both languages — see each package's README.
