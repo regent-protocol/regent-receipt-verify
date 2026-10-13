@@ -35,6 +35,12 @@ msalt = "ab" * 32
 mhash = mandate_terms.commitment(snapshot, msalt)
 mandate_reveal = {"mandate_id": snapshot["mandate_id"], "version": 2, "canon": "terms-v2", "snapshot": snapshot,
                   "salt": msalt, "hash": mhash, "canonical_string": mandate_terms.canonical_string(snapshot, msalt)}
+# terms-v3 (backlog 29): the same mandate one version later, now with a scope
+snapshot_v3 = {**snapshot, "version": 3, "allowed_resources": ["agentcard_buy", "sku:coffee/"]}
+mhash3 = mandate_terms.commitment(snapshot_v3, msalt)
+mandate_reveal_v3 = {"mandate_id": snapshot["mandate_id"], "version": 3, "canon": "terms-v3", "snapshot": snapshot_v3,
+                     "salt": msalt, "hash": mhash3, "canonical_string": mandate_terms.canonical_string(snapshot_v3, msalt)}
+assert "|allowed_resources=agentcard_buy,sku:coffee/|salt=" in mandate_reveal_v3["canonical_string"]
 
 ptext = 'permit (principal, action, resource) when { context.agent_active == true };\n'
 pprofile = {"counterparty_allowlist": True, "escalation_amount": "500.00", "signed_agents_only": False, "observe_mode": False}
@@ -50,6 +56,10 @@ common = dict(agent_id="agent_abc", tool="stripe", action="charge.create", decis
 allow_token, exp = issuer.issue(**common)
 receipt = issuer.issue_receipt(status="success", mismatch=False, **{k: v for k, v in common.items() if k not in ("tool", "action")},
                                tool="stripe", action="charge.create")
+receipt_v3 = issuer.issue_receipt(status="success", mismatch=False, tool="stripe", action="charge.create",
+                                  **{k: v for k, v in common.items()
+                                     if k not in ("tool", "action", "mandate_version", "mandate_hash")},
+                                  mandate_version=3, mandate_hash=mhash3)
 starter_receipt = issuer.issue_receipt(decision_id="dec_s", agent_id="agent_abc", status="success",
                                        policy_version=0, policy_hash=policy_terms.starter_hash(starter_text), policy_source="starter")
 budget_token, _, _ = issuer.issue_budget_token(agent_id="agent_abc", resource="https://merchant.example", cnf_jwk={"kty": "OKP"},
@@ -99,11 +109,14 @@ vectors = {
     "args_hash": ah,
     "wrong_request": {**request, "args": {**request["args"], "amount": 401}},
     "mandate_reveal": mandate_reveal,
+    "mandate_reveal_v3": mandate_reveal_v3,
     "policy_reveal": policy_reveal,
     "starter_text": starter_text,
     "counterparty_jwks": {"keys": [cp_ed_jwk, cp_ec_jwk]},
     "stranger_jwks": {"keys": [stranger_jwk]},
     "cases": {
+        "receipt_v3_scope": {"token": receipt_v3, "reveal": "mandate_reveal_v3",
+                             "expect": {"kind": "receipt", "signature_valid": True, "mandate_match": True}},
         "receipt_confirmed": {"token": confirmed_ed, "expect": {"kind": "receipt", "signature_valid": True, "confirmation_match": True,
                                                                 "confirmation_alg": "EdDSA", "settlement_source": "counterparty"}},
         "receipt_confirmed_es256": {"token": confirmed_ec, "expect": {"kind": "receipt", "signature_valid": True, "confirmation_match": True,

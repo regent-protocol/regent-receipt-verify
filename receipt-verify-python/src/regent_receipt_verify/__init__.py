@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "VerificationResult", "ConfirmationCheck", "verify_token", "verify", "canonical_args_hash",
     "check_request_binding", "mandate_commitment", "check_mandate_reveal", "policy_commitment",
@@ -167,11 +167,16 @@ def check_request_binding(claims: dict[str, Any], *, tool: str, action: str, res
     return bool(expected) and hmac.compare_digest(canonical_args_hash(tool, action, resource, args), str(expected))
 
 
-# ── mandate terms (terms-v2) ──────────────────────────────────────────────────
-
-MANDATE_FIELDS = ("mandate_id", "version", "agent_id", "owner_id", "currency", "settlement_chain", "status",
-                  "per_tx_limit", "daily_limit", "monthly_limit", "per_entity_limit", "entity_key", "relational_cap",
-                  "expires_at", "agent_may_read_limits")
+# ── mandate terms (terms-v2 / terms-v3) ───────────────────────────────────────
+# terms-v3 (2026-10-13) appends allowed_resources: the mandate's scope (tool names or
+# resource prefixes), comma-joined in stored order. A reveal says which canon it is; a
+# snapshot that names allowed_resources is v3 when it does not.
+MANDATE_FIELDS_V2 = ("mandate_id", "version", "agent_id", "owner_id", "currency", "settlement_chain", "status",
+                     "per_tx_limit", "daily_limit", "monthly_limit", "per_entity_limit", "entity_key", "relational_cap",
+                     "expires_at", "agent_may_read_limits")
+MANDATE_FIELDS_V3 = (*MANDATE_FIELDS_V2, "allowed_resources")
+MANDATE_FIELDS = MANDATE_FIELDS_V3
+_MANDATE_CANONS = {"terms-v2": MANDATE_FIELDS_V2, "terms-v3": MANDATE_FIELDS_V3}
 
 
 def _cv(value: Any) -> str:
@@ -181,15 +186,24 @@ def _cv(value: Any) -> str:
         return "true"
     if value is False:
         return "false"
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(v) for v in value)
     return str(value)
 
 
-def mandate_canonical_string(snapshot: dict[str, Any], salt: str) -> str:
-    return "|".join(["terms-v2", *(f"{n}={_cv(snapshot.get(n))}" for n in MANDATE_FIELDS), f"salt={salt}"])
+def mandate_canon(snapshot: dict[str, Any], canon: str | None = None) -> str:
+    if canon in _MANDATE_CANONS:
+        return canon
+    return "terms-v3" if "allowed_resources" in snapshot else "terms-v2"
 
 
-def mandate_commitment(snapshot: dict[str, Any], salt: str) -> str:
-    return hashlib.sha256(mandate_canonical_string(snapshot, salt).encode("utf-8")).hexdigest()
+def mandate_canonical_string(snapshot: dict[str, Any], salt: str, canon: str | None = None) -> str:
+    c = mandate_canon(snapshot, canon)
+    return "|".join([c, *(f"{n}={_cv(snapshot.get(n))}" for n in _MANDATE_CANONS[c]), f"salt={salt}"])
+
+
+def mandate_commitment(snapshot: dict[str, Any], salt: str, canon: str | None = None) -> str:
+    return hashlib.sha256(mandate_canonical_string(snapshot, salt, canon).encode("utf-8")).hexdigest()
 
 
 def check_mandate_reveal(claims: dict[str, Any], reveal: dict[str, Any]) -> bool:
@@ -201,7 +215,8 @@ def check_mandate_reveal(claims: dict[str, Any], reveal: dict[str, Any]) -> bool
         return False
     if "version" in snap and claims.get("mandate_version") is not None and int(snap["version"]) != int(claims["mandate_version"]):
         return False
-    return hmac.compare_digest(mandate_commitment(snap, salt.lower()), expected.lower())
+    canon = reveal.get("canon") if isinstance(reveal.get("canon"), str) else None
+    return hmac.compare_digest(mandate_commitment(snap, salt.lower(), canon), expected.lower())
 
 
 # ── policy (policy-v1) ────────────────────────────────────────────────────────

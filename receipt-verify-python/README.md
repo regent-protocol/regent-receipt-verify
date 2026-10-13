@@ -25,7 +25,7 @@ What it proves:
 | `kind` receipt / allow / budget | a receipt (`typ receipt+jwt`, `aud regent-receipt`) can never pass as an access token |
 | `expired` | receipts carry a 10-year evidence period; an allow token lives about a minute, so for evidence its expiry is a note, not a failure |
 | `args_hash_match` | the token authorised this exact request (tool, action, resource, args) and nothing else |
-| `mandate_match` | the owner's revealed mandate version (snapshot + salt, `terms-v2`) opens the receipt's `mandate_hash` |
+| `mandate_match` | the owner's revealed mandate version (snapshot + salt; `terms-v2`, or `terms-v3` with the scope `allowed_resources`) opens the receipt's `mandate_hash` |
 | `policy_match` | the organisation's revealed policy version (text + profile + salt, `policy-v1`) opens `policy_hash`; starter-pack decisions need only the public text |
 | `confirmation_match` | the settlement confirmation the counterparty (merchant, PSP, custodian) signed over the same decision, embedded in the receipt, re-verified against the counterparty's own JWKS and compared with the receipt's figures: two signatures over the same facts, checked offline. `settlement_source: agent` receipts have none |
 

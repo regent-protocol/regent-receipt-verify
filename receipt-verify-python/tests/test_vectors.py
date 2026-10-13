@@ -22,7 +22,8 @@ def test_args_hash_matches_the_gate():
 @pytest.mark.parametrize("name", ["receipt", "allow"])
 def test_full_verification(name):
     case = V["cases"][name]
-    res = verify(case["token"], V["jwks"], request=V["request"], mandate_reveal=V["mandate_reveal"],
+    reveal = V[case.get("reveal", "mandate_reveal")]
+    res = verify(case["token"], V["jwks"], request=V["request"], mandate_reveal=reveal,
                  policy_reveal=V["policy_reveal"], now=NOW)
     e = case["expect"]
     assert res.kind == e["kind"] and res.signature_valid is True and res.valid is True
@@ -31,10 +32,14 @@ def test_full_verification(name):
     assert res.kid == V["jwks"]["keys"][0]["kid"]
     # every tampering of a reveal or the request must fail to open the commitment
     assert verify(case["token"], V["jwks"], request=V["wrong_request"], now=NOW).args_hash_match is False
-    bad_m = {**V["mandate_reveal"], "salt": "00" * 32}
+    bad_m = {**reveal, "salt": "00" * 32}
     assert check_mandate_reveal(res.claims, bad_m) is False
-    bad_snap = {**V["mandate_reveal"], "snapshot": {**V["mandate_reveal"]["snapshot"], "daily_limit": "9999.000000"}}
+    bad_snap = {**reveal, "snapshot": {**reveal["snapshot"], "daily_limit": "9999.000000"}}
     assert check_mandate_reveal(res.claims, bad_snap) is False
+    if reveal.get("canon") == "terms-v3":
+        narrower = {**reveal, "snapshot": {**reveal["snapshot"], "allowed_resources": ["sku:coffee/"]}}
+        assert check_mandate_reveal(res.claims, narrower) is False  # the scope is part of the commitment
+        assert check_mandate_reveal(res.claims, {**reveal, "canon": "terms-v2"}) is False  # canon matters
     assert check_policy_reveal(res.claims, {**V["policy_reveal"], "cedar_text": V["policy_reveal"]["cedar_text"] + " "}) is False
     assert check_policy_reveal(res.claims, {**V["policy_reveal"], "profile": None}) is False
 

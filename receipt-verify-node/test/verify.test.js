@@ -19,7 +19,8 @@ test("args hash matches the gate", () => {
 
 for (const name of ["receipt", "allow"]) {
   test(`full verification: ${name}`, () => {
-    const res = verify(V.cases[name].token, V.jwks, { request: V.request, mandateReveal: V.mandate_reveal, policyReveal: V.policy_reveal, now: NOW });
+    const reveal = V[V.cases[name].reveal || "mandate_reveal"];
+    const res = verify(V.cases[name].token, V.jwks, { request: V.request, mandateReveal: reveal, policyReveal: V.policy_reveal, now: NOW });
     assert.equal(res.kind, V.cases[name].expect.kind);
     assert.equal(res.signatureValid, true); assert.equal(res.valid, true); assert.equal(res.expired, false);
     assert.equal(res.argsHashMatch, true); assert.equal(res.mandateMatch, true); assert.equal(res.policyMatch, true);

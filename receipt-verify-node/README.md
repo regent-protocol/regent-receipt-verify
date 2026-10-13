@@ -18,7 +18,7 @@ res.valid; res.kind; res.claims; res.argsHashMatch; res.mandateMatch; res.policy
 Checks: RS256 signature against the JWKS (`kid`), token kind (receipt / allow / budget), expiry
 (a note for allow tokens, an error for receipts past their 10-year evidence period), request
 binding (`args_hash` over canonical JSON of tool, action, resource, args), mandate reveal
-(`terms-v2`), policy reveal (`policy-v1`; starter-pack decisions need only the public text) and, with
+(`terms-v2 / terms-v3 (with the scope `allowed_resources`)`), policy reveal (`policy-v1`; starter-pack decisions need only the public text) and, with
 `--counterparty-jwks`, the counterparty's settlement confirmation embedded in the receipt (`checkConfirmation`:
 ES256 / EdDSA / RS256 / PS256 against the counterparty's JWKS, then decision, status, amount and hash
 compared with the receipt).

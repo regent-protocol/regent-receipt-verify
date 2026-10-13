@@ -4,7 +4,7 @@
 // the same request hash (sha256 over canonical JSON of {tool, action, resource, args}).
 import { constants, createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from "node:crypto";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 const b64url = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
@@ -82,12 +82,17 @@ export function checkRequestBinding(claims, { tool, action, resource = null, arg
   return Boolean(claims.args_hash) && safeEq(canonicalArgsHash(tool, action, resource, args), claims.args_hash);
 }
 
-// ── mandate terms (terms-v2) ──
-export const MANDATE_FIELDS = ["mandate_id", "version", "agent_id", "owner_id", "currency", "settlement_chain", "status",
+// ── mandate terms (terms-v2 / terms-v3) ──
+// terms-v3 (2026-10-13) appends allowed_resources: the mandate's scope, comma-joined in stored order.
+export const MANDATE_FIELDS_V2 = ["mandate_id", "version", "agent_id", "owner_id", "currency", "settlement_chain", "status",
   "per_tx_limit", "daily_limit", "monthly_limit", "per_entity_limit", "entity_key", "relational_cap", "expires_at", "agent_may_read_limits"];
-const cv = (v) => (v === null || v === undefined) ? "none" : v === true ? "true" : v === false ? "false" : String(v);
-export const mandateCanonicalString = (snapshot, salt) => ["terms-v2", ...MANDATE_FIELDS.map((k) => `${k}=${cv(snapshot[k])}`), `salt=${salt}`].join("|");
-export const mandateCommitment = (snapshot, salt) => sha256(mandateCanonicalString(snapshot, salt));
+export const MANDATE_FIELDS_V3 = [...MANDATE_FIELDS_V2, "allowed_resources"];
+export const MANDATE_FIELDS = MANDATE_FIELDS_V3;
+const MANDATE_CANONS = { "terms-v2": MANDATE_FIELDS_V2, "terms-v3": MANDATE_FIELDS_V3 };
+const cv = (v) => (v === null || v === undefined) ? "none" : v === true ? "true" : v === false ? "false" : Array.isArray(v) ? v.join(",") : String(v);
+export const mandateCanon = (snapshot, canon) => (canon in MANDATE_CANONS) ? canon : ("allowed_resources" in (snapshot || {}) ? "terms-v3" : "terms-v2");
+export const mandateCanonicalString = (snapshot, salt, canon) => { const c = mandateCanon(snapshot, canon); return [c, ...MANDATE_CANONS[c].map((k) => `${k}=${cv(snapshot[k])}`), `salt=${salt}`].join("|"); };
+export const mandateCommitment = (snapshot, salt, canon) => sha256(mandateCanonicalString(snapshot, salt, canon));
 
 export function checkMandateReveal(claims, reveal) {
   const expected = String(claims.mandate_hash || "");
@@ -95,7 +100,8 @@ export function checkMandateReveal(claims, reveal) {
   const salt = String((reveal && reveal.salt) || "");
   if (!expected || !salt || !snap) return false;
   if (snap.version !== undefined && claims.mandate_version != null && Number(snap.version) !== Number(claims.mandate_version)) return false;
-  return safeEq(mandateCommitment(snap, salt.toLowerCase()), expected.toLowerCase());
+  const canon = reveal && typeof reveal.canon === "string" ? reveal.canon : undefined;
+  return safeEq(mandateCommitment(snap, salt.toLowerCase(), canon), expected.toLowerCase());
 }
 
 // ── policy (policy-v1) ──
