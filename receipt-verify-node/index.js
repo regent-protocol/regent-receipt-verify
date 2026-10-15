@@ -85,7 +85,8 @@ export function checkRequestBinding(claims, { tool, action, resource = null, arg
 // ── mandate terms (terms-v2 / terms-v3 / terms-v4) ──
 // terms-v3 (2026-10-13) appends allowed_resources: the mandate's scope, comma-joined in stored order.
 // terms-v4 (2026-10-15) appends entity_limits: caps per counterparty as canonical strings
-// "<match>=<per_tx|none>;<monthly|none>", sorted, comma-joined — the same list form as the scope.
+// "<match>=<per_tx|none>;<monthly|none>[;<daily>]", sorted, comma-joined — the same list
+// form as the scope. The third field appears only where the owner set a daily figure.
 export const MANDATE_FIELDS_V2 = ["mandate_id", "version", "agent_id", "owner_id", "currency", "settlement_chain", "status",
   "per_tx_limit", "daily_limit", "monthly_limit", "per_entity_limit", "entity_key", "relational_cap", "expires_at", "agent_may_read_limits"];
 export const MANDATE_FIELDS_V3 = [...MANDATE_FIELDS_V2, "allowed_resources"];

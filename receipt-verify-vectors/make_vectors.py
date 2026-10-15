@@ -43,12 +43,14 @@ mandate_reveal_v3 = {"mandate_id": snapshot["mandate_id"], "version": 3, "canon"
 assert "|allowed_resources=agentcard_buy,sku:coffee/|salt=" in mandate_reveal_v3["canonical_string"]
 # terms-v4 (per-counterparty caps): one version later, with a table of caps per seller
 snapshot_v4 = {**snapshot_v3, "version": 4, "entity_limits": mandate_terms.format_entity_limits([
-    {"match": "kaspi.kz", "per_tx_limit": "5000"}, {"match": "arbuz.kz", "per_tx_limit": "3000", "monthly_limit": "20000"},
+    {"match": "kaspi.kz", "per_tx_limit": "5000"},
+    {"match": "arbuz.kz", "per_tx_limit": "3000", "monthly_limit": "20000", "daily_limit": "6000"},
     {"match": "*", "monthly_limit": "10000"}])}
 mhash4 = mandate_terms.commitment(snapshot_v4, msalt)
 mandate_reveal_v4 = {"mandate_id": snapshot["mandate_id"], "version": 4, "canon": "terms-v4", "snapshot": snapshot_v4,
                      "salt": msalt, "hash": mhash4, "canonical_string": mandate_terms.canonical_string(snapshot_v4, msalt)}
-assert "|entity_limits=*=none;10000.000000,arbuz.kz=3000.000000;20000.000000,kaspi.kz=5000.000000;none|salt=" in mandate_reveal_v4["canonical_string"]
+assert ("|entity_limits=*=none;10000.000000,arbuz.kz=3000.000000;20000.000000;6000.000000,"
+        "kaspi.kz=5000.000000;none|salt=") in mandate_reveal_v4["canonical_string"]
 
 ptext = 'permit (principal, action, resource) when { context.agent_active == true };\n'
 pprofile = {"counterparty_allowlist": True, "escalation_amount": "500.00", "signed_agents_only": False, "observe_mode": False}
