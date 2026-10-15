@@ -17,7 +17,7 @@ test("args hash matches the gate", () => {
   assert.equal(canonicalArgsHash(r.tool, r.action, r.resource, r.args), V.args_hash);
 });
 
-for (const name of ["receipt", "allow"]) {
+for (const name of ["receipt", "allow", "receipt_v3_scope", "receipt_v4_caps"]) {
   test(`full verification: ${name}`, () => {
     const reveal = V[V.cases[name].reveal || "mandate_reveal"];
     const res = verify(V.cases[name].token, V.jwks, { request: V.request, mandateReveal: reveal, policyReveal: V.policy_reveal, now: NOW });
@@ -30,6 +30,13 @@ for (const name of ["receipt", "allow"]) {
     assert.equal(checkMandateReveal(res.claims, { ...V.mandate_reveal, snapshot: { ...V.mandate_reveal.snapshot, daily_limit: "9999.000000" } }), false);
     assert.equal(checkPolicyReveal(res.claims, { ...V.policy_reveal, cedar_text: V.policy_reveal.cedar_text + " " }), false);
     assert.equal(checkPolicyReveal(res.claims, { ...V.policy_reveal, profile: null }), false);
+    if (reveal.canon === "terms-v4") {
+      // the caps per seller are part of the commitment: a different table, or the same
+      // snapshot read as v3, does not open it; the receipt names who was paid and who said so
+      assert.equal(checkMandateReveal(res.claims, { ...reveal, snapshot: { ...reveal.snapshot, entity_limits: ["arbuz.kz=4000.000000;none"] } }), false);
+      assert.equal(checkMandateReveal(res.claims, { ...reveal, canon: "terms-v3" }), false);
+      assert.equal(res.claims.payee, "arbuz.kz"); assert.equal(res.claims.payee_source, "rail");
+    }
   });
 }
 

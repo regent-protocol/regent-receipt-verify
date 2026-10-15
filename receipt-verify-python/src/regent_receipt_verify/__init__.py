@@ -175,8 +175,11 @@ MANDATE_FIELDS_V2 = ("mandate_id", "version", "agent_id", "owner_id", "currency"
                      "per_tx_limit", "daily_limit", "monthly_limit", "per_entity_limit", "entity_key", "relational_cap",
                      "expires_at", "agent_may_read_limits")
 MANDATE_FIELDS_V3 = (*MANDATE_FIELDS_V2, "allowed_resources")
-MANDATE_FIELDS = MANDATE_FIELDS_V3
-_MANDATE_CANONS = {"terms-v2": MANDATE_FIELDS_V2, "terms-v3": MANDATE_FIELDS_V3}
+# terms-v4 (2026-10-15) appends entity_limits: caps per counterparty as canonical strings
+# "<match>=<per_tx|none>;<monthly|none>", sorted, comma-joined like the scope.
+MANDATE_FIELDS_V4 = (*MANDATE_FIELDS_V3, "entity_limits")
+MANDATE_FIELDS = MANDATE_FIELDS_V4
+_MANDATE_CANONS = {"terms-v2": MANDATE_FIELDS_V2, "terms-v3": MANDATE_FIELDS_V3, "terms-v4": MANDATE_FIELDS_V4}
 
 
 def _cv(value: Any) -> str:
@@ -194,6 +197,8 @@ def _cv(value: Any) -> str:
 def mandate_canon(snapshot: dict[str, Any], canon: str | None = None) -> str:
     if canon in _MANDATE_CANONS:
         return canon
+    if "entity_limits" in snapshot:
+        return "terms-v4"
     return "terms-v3" if "allowed_resources" in snapshot else "terms-v2"
 
 

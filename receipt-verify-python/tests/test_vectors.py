@@ -19,7 +19,7 @@ def test_args_hash_matches_the_gate():
     assert canonical_args_hash(r["tool"], r["action"], r["resource"], r["args"]) == V["args_hash"]
 
 
-@pytest.mark.parametrize("name", ["receipt", "allow"])
+@pytest.mark.parametrize("name", ["receipt", "allow", "receipt_v3_scope", "receipt_v4_caps"])
 def test_full_verification(name):
     case = V["cases"][name]
     reveal = V[case.get("reveal", "mandate_reveal")]
@@ -40,6 +40,11 @@ def test_full_verification(name):
         narrower = {**reveal, "snapshot": {**reveal["snapshot"], "allowed_resources": ["sku:coffee/"]}}
         assert check_mandate_reveal(res.claims, narrower) is False  # the scope is part of the commitment
         assert check_mandate_reveal(res.claims, {**reveal, "canon": "terms-v2"}) is False  # canon matters
+    if reveal.get("canon") == "terms-v4":
+        other_table = {**reveal, "snapshot": {**reveal["snapshot"], "entity_limits": ["arbuz.kz=4000.000000;none"]}}
+        assert check_mandate_reveal(res.claims, other_table) is False  # the caps per seller are part of the commitment
+        assert check_mandate_reveal(res.claims, {**reveal, "canon": "terms-v3"}) is False
+        assert res.claims["payee"] == "arbuz.kz" and res.claims["payee_source"] == "rail"
     assert check_policy_reveal(res.claims, {**V["policy_reveal"], "cedar_text": V["policy_reveal"]["cedar_text"] + " "}) is False
     assert check_policy_reveal(res.claims, {**V["policy_reveal"], "profile": None}) is False
 

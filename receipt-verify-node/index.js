@@ -82,15 +82,19 @@ export function checkRequestBinding(claims, { tool, action, resource = null, arg
   return Boolean(claims.args_hash) && safeEq(canonicalArgsHash(tool, action, resource, args), claims.args_hash);
 }
 
-// ── mandate terms (terms-v2 / terms-v3) ──
+// ── mandate terms (terms-v2 / terms-v3 / terms-v4) ──
 // terms-v3 (2026-10-13) appends allowed_resources: the mandate's scope, comma-joined in stored order.
+// terms-v4 (2026-10-15) appends entity_limits: caps per counterparty as canonical strings
+// "<match>=<per_tx|none>;<monthly|none>", sorted, comma-joined — the same list form as the scope.
 export const MANDATE_FIELDS_V2 = ["mandate_id", "version", "agent_id", "owner_id", "currency", "settlement_chain", "status",
   "per_tx_limit", "daily_limit", "monthly_limit", "per_entity_limit", "entity_key", "relational_cap", "expires_at", "agent_may_read_limits"];
 export const MANDATE_FIELDS_V3 = [...MANDATE_FIELDS_V2, "allowed_resources"];
-export const MANDATE_FIELDS = MANDATE_FIELDS_V3;
-const MANDATE_CANONS = { "terms-v2": MANDATE_FIELDS_V2, "terms-v3": MANDATE_FIELDS_V3 };
+export const MANDATE_FIELDS_V4 = [...MANDATE_FIELDS_V3, "entity_limits"];
+export const MANDATE_FIELDS = MANDATE_FIELDS_V4;
+const MANDATE_CANONS = { "terms-v2": MANDATE_FIELDS_V2, "terms-v3": MANDATE_FIELDS_V3, "terms-v4": MANDATE_FIELDS_V4 };
 const cv = (v) => (v === null || v === undefined) ? "none" : v === true ? "true" : v === false ? "false" : Array.isArray(v) ? v.join(",") : String(v);
-export const mandateCanon = (snapshot, canon) => (canon in MANDATE_CANONS) ? canon : ("allowed_resources" in (snapshot || {}) ? "terms-v3" : "terms-v2");
+export const mandateCanon = (snapshot, canon) => (canon in MANDATE_CANONS) ? canon
+  : ("entity_limits" in (snapshot || {}) ? "terms-v4" : "allowed_resources" in (snapshot || {}) ? "terms-v3" : "terms-v2");
 export const mandateCanonicalString = (snapshot, salt, canon) => { const c = mandateCanon(snapshot, canon); return [c, ...MANDATE_CANONS[c].map((k) => `${k}=${cv(snapshot[k])}`), `salt=${salt}`].join("|"); };
 export const mandateCommitment = (snapshot, salt, canon) => sha256(mandateCanonicalString(snapshot, salt, canon));
 
