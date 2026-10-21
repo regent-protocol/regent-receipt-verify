@@ -76,7 +76,7 @@ if (res.signatureValid) {
   for (const k of ["decision_id", "status", "environment", "sub", "assertion_scheme", "assertion_kid", "key_custody",
     "amount", "currency", "payee", "mandate_id", "mandate_version", "mandate_hash",
                    "policy_source", "policy_version", "policy_hash", "risk_model", "tool", "action", "scope", "args_hash",
-                   "settlement_mismatch", "settlement_source", "confirmed_by", "confirmation_kid", "confirmation_ref", "confirmation_kind",
+                   "settlement_mismatch", "settlement_source", "settlement_ref", "settlement_network", "confirmed_by", "confirmation_kid", "confirmation_ref", "confirmation_kind",
                    "agent_report_mismatch", "jti", "iat", "exp"]) if (k in c) console.log(`  ${k}: ${c[k]}`);
   for (const [label, val] of [["request binding (args_hash)", res.argsHashMatch], ["mandate reveal", res.mandateMatch], ["policy reveal", res.policyMatch],
                               ["counterparty confirmation", res.confirmationMatch]])

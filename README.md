@@ -27,6 +27,7 @@ What a verification proves:
 | `args_hash` | the token authorised this exact request (tool, action, resource, args) and nothing else |
 | mandate reveal (`terms-v2`) | the owner's revealed mandate version (snapshot + salt) opens the receipt's `mandate_hash` |
 | policy reveal (`policy-v1`) | the organisation's revealed policy version (text + profile + salt) opens `policy_hash`; starter-pack decisions need only the public text |
+| `settlement_ref` / `settlement_network` (0.7.0) | the rail's own reference for the settled money — a chain transaction hash with the chain it is on (a custodian such as Rox Custody, `settlement_source: custodian`), or a PSP's charge id — signed into the receipt, so the money's movement can be looked up on the rail next to the decision that allowed it. Absent on failed or voided settlements |
 | counterparty confirmation | the settlement confirmation the counterparty (merchant, PSP, custodian) signed over the same decision is embedded in the receipt (`confirmation`); pass the counterparty's JWKS (`--counterparty-jwks`) to re-verify it and compare it with the receipt's figures: two signatures over the same facts, checked offline. `settlement_source: agent` receipts carry none |
 
 Ceilings never ride in a token: the receipt carries a version and a salted commitment, the

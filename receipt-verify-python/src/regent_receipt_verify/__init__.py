@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-__version__ = "0.5.0"
+__version__ = "0.7.0"
 __all__ = [
     "VerificationResult", "ConfirmationCheck", "verify_token", "verify", "canonical_args_hash",
     "check_request_binding", "mandate_commitment", "check_mandate_reveal", "policy_commitment",
@@ -264,6 +264,15 @@ def check_policy_reveal(claims: dict[str, Any], reveal: dict[str, Any] | str) ->
         return False
     return hmac.compare_digest(got, expected.lower())
 
+
+# ── where the money went: settlement_ref / settlement_network (0.7.0) ─────────
+#
+# A receipt whose settlement Regent read from the rail itself (`settlement_source:
+# custodian` for a custodian's ledger, `counterparty` for a signed confirmation) may carry
+# `settlement_ref`: the rail's own reference for the settled money — a chain transaction
+# hash, a PSP charge id — and, when that reference lives on a chain, `settlement_network`.
+# They are signed claims like any other: the verifier shows them, you look them up on the
+# rail. A receipt for a failed or voided settlement never carries them.
 
 # ── counterparty settlement confirmation ──────────────────────────────────────
 #

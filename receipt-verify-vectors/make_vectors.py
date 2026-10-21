@@ -108,6 +108,18 @@ def _confirmed_receipt(key, alg, kid):
                                 **{k: v for k, v in common.items() if k not in ("tool", "action")})
 
 
+# A receipt whose settlement Regent read from the custodian's own ledger (Rox Custody,
+# 21.10.2026): the rail's reference for the money — here a chain transaction hash and
+# the chain it is on — rides in the receipt beside the decision it closed.
+CHAIN_TX = "0x77d9b1b1fa4e6314ac916c84123bd28c6a12bc9acd3742e174f02b66ff0bf8ba"
+receipt_custodian = issuer.issue_receipt(
+    decision_id="dec_a7cc7fdb4793", agent_id="agent_abc", status="success", amount=1.0, currency="USDC",
+    payee="0x66d90482E6Bb6EDFD0cc300D822a6a3c729e6939", mandate_id=snapshot["mandate_id"], mandate_version=4,
+    mandate_hash=mhash4, tool="custody", action="transfer", args_hash=ah, mismatch=False,
+    policy_version=3, policy_hash=phash, policy_source="org", risk_model="guardian-1.2",
+    approval_method="passkey", environment="production", settlement_source="custodian",
+    settlement_ref=CHAIN_TX, settlement_network="Base Sepolia")
+
 confirmed_ed = _confirmed_receipt(cp_ed, "EdDSA", "cp-ed25519")
 confirmed_ec = _confirmed_receipt(cp_ec, "ES256", "cp-p256")
 h, p, s = receipt.split(".")
@@ -136,6 +148,10 @@ vectors = {
         "receipt_v4_caps": {"token": receipt_v4, "reveal": "mandate_reveal_v4",
                             "expect": {"kind": "receipt", "signature_valid": True, "mandate_match": True,
                                        "payee": "arbuz.kz", "payee_source": "rail"}},
+        "receipt_custodian": {"token": receipt_custodian, "reveal": "mandate_reveal_v4",
+                              "expect": {"kind": "receipt", "signature_valid": True, "mandate_match": True,
+                                         "settlement_source": "custodian", "settlement_ref": CHAIN_TX,
+                                         "settlement_network": "Base Sepolia"}},
         "receipt_confirmed": {"token": confirmed_ed, "expect": {"kind": "receipt", "signature_valid": True, "confirmation_match": True,
                                                                 "confirmation_alg": "EdDSA", "settlement_source": "counterparty"}},
         "receipt_confirmed_es256": {"token": confirmed_ec, "expect": {"kind": "receipt", "signature_valid": True, "confirmation_match": True,

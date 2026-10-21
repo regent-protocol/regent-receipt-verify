@@ -4,7 +4,7 @@
 // the same request hash (sha256 over canonical JSON of {tool, action, resource, args}).
 import { constants, createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from "node:crypto";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.7.0";
 
 const b64url = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
@@ -128,6 +128,14 @@ export function checkPolicyReveal(claims, reveal) {
   const profile = reveal.profile && typeof reveal.profile === "object" ? reveal.profile : null;
   return safeEq(policyCommitment(String(reveal.org_id || ""), version, text, profile, String(reveal.salt || "").toLowerCase()), expected.toLowerCase());
 }
+
+// ── where the money went: settlement_ref / settlement_network (0.7.0) ─────────
+// A receipt whose settlement Regent read from the rail itself (`settlement_source:
+// custodian` for a custodian's ledger, `counterparty` for a signed confirmation) may carry
+// `settlement_ref`: the rail's own reference for the settled money — a chain transaction
+// hash, a PSP charge id — and, when that reference lives on a chain, `settlement_network`.
+// Signed claims like any other: shown here, looked up on the rail by the reader. A receipt
+// for a failed or voided settlement never carries them.
 
 // ── counterparty settlement confirmation ──────────────────────────────────────
 // A receipt whose settlement the other side of the payment confirmed carries

@@ -81,6 +81,18 @@ test("cli", () => {
   assert.throws(() => execFileSync("node", [join(here, "..", "cli.js"), V.cases.tampered.token, "--jwks", f("jwks.json", V.jwks), "--now", String(NOW)], { stdio: "pipe" }));
 });
 
+// ── settlement read from the custodian's ledger (0.7.0) ──────────────────────
+
+test("custodian-settled receipt names the chain transaction", () => {
+  const c = V.cases.receipt_custodian;
+  const res = verify(c.token, V.jwks, { mandateReveal: V.mandate_reveal_v4, now: NOW });
+  assert.equal(res.valid, true); assert.equal(res.mandateMatch, true);
+  assert.equal(res.claims.settlement_source, "custodian");
+  assert.equal(res.claims.settlement_ref, c.expect.settlement_ref); assert.equal(res.claims.settlement_network, c.expect.settlement_network);
+  assert.equal(res.claims.tool, "custody"); assert.equal(res.claims.approval_method, "passkey");
+  assert.equal(res.confirmationMatch, null);
+});
+
 // ── counterparty settlement confirmation (receipts minted with P-1) ────────────
 
 for (const name of ["receipt_confirmed", "receipt_confirmed_es256"]) {

@@ -106,6 +106,19 @@ def test_cli(tmp_path, capsys):
     assert main([V["cases"]["allow"]["token"], "--jwks", str(jw), "--request", str(bad), "--now", str(NOW)]) == 1
 
 
+# ── settlement read from the custodian's ledger (0.7.0) ──────────────────────
+
+def test_custodian_settled_receipt_names_the_chain_transaction():
+    case = V["cases"]["receipt_custodian"]
+    res = verify(case["token"], V["jwks"], mandate_reveal=V["mandate_reveal_v4"], now=NOW)
+    assert res.valid and res.mandate_match is True
+    e = case["expect"]
+    assert res.claims["settlement_source"] == "custodian"
+    assert res.claims["settlement_ref"] == e["settlement_ref"] and res.claims["settlement_network"] == e["settlement_network"]
+    assert res.claims["tool"] == "custody" and res.claims["approval_method"] == "passkey"
+    assert res.confirmation_match is None  # a custodian receipt embeds no counterparty JWS
+
+
 # ── counterparty settlement confirmation (receipts minted with P-1) ────────────
 
 @pytest.mark.parametrize("name", ["receipt_confirmed", "receipt_confirmed_es256"])
