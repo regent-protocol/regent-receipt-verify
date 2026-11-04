@@ -1,6 +1,6 @@
 {
   "name": "@regent-protocol/receipt-verify",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Verify Regent Control receipts and allow tokens offline against a saved JWKS; open mandate and policy reveals. Zero dependencies.",
   "license": "Apache-2.0",
   "type": "module",
@@ -18,6 +18,8 @@
   "files": [
     "index.js",
     "bundle.js",
+    "tsa.js",
+    "tsa_roots.pem",
     "index.d.ts",
     "cli.js",
     "README.md",

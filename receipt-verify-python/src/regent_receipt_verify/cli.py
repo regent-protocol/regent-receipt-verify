@@ -33,12 +33,14 @@ def _bundle_main(argv: list[str]) -> int:
                     help="saved checkpoint JWKS (default: the one inside the bundle)")
     ap.add_argument("--rpc", help="Solana JSON-RPC URL: also check the append and anchor transactions on the network")
     ap.add_argument("--now", type=float, help="epoch seconds to evaluate the receipt's exp against")
+    ap.add_argument("--tsa-root", action="append", metavar="PEM",
+                    help="PEM file of a root to trust for RFC 3161 tokens (default: the packaged DigiCert and Sectigo roots)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     a = ap.parse_args(argv)
     bundle = _load(a.bundle)
     res = verify_bundle(bundle, receipt_jwks=[_load(p) for p in a.jwks] if a.jwks else None,
                         checkpoint_jwks=[_load(p) for p in a.checkpoint_jwks] if a.checkpoint_jwks else None,
-                        rpc=a.rpc, now=a.now)
+                        rpc=a.rpc, now=a.now, tsa_roots=_tsa_roots(a.tsa_root))
     if a.json:
         print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
         return 0 if res.valid else 1
@@ -53,7 +55,9 @@ def _bundle_main(argv: list[str]) -> int:
         print(f"  [{flag}] {ev.event_id} ({ev.event_type}) seq={ev.seq} bytes={_yn(ev.canonical_ok)} "
               f"batch={_yn(ev.merkle_ok)} checkpoint={_yn(ev.checkpoint_ok)}"
               + (f" kid={ev.checkpoint_kid}" if ev.checkpoint_kid else "")
-              + (f" epoch={_yn(ev.epoch_ok)}" if ev.epoch_ok is not None else ""))
+              + (f" epoch={_yn(ev.epoch_ok)}" if ev.epoch_ok is not None else "")
+              + (f" rfc3161={_yn(ev.tsa_ok)}" + (f" {ev.tsa_time} by {ev.tsa_signer}" if ev.tsa_ok else "")
+                 if ev.tsa_ok is not None else ""))
         for e in ev.errors:
             print(f"        {e}")
     if res.links_ok is not None:
@@ -69,6 +73,17 @@ def _bundle_main(argv: list[str]) -> int:
             print(f"        {c.get('kind')} {c.get('tx')}: "
                   + ("ok" if c.get("ok") else c.get("error") or "root not found in a successful instruction"))
     return 0 if res.valid else 1
+
+
+def _tsa_roots(paths: list[str] | None):  # noqa: ANN202
+    if not paths:
+        return None
+    from cryptography import x509
+    roots = []
+    for p in paths:
+        with open(p, "rb") as f:
+            roots.extend(x509.load_pem_x509_certificates(f.read()))
+    return roots
 
 
 def _yn(v: bool | None) -> str:

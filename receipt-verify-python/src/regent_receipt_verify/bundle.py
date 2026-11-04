@@ -33,6 +33,7 @@ not provenance.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import urllib.request
@@ -99,6 +100,10 @@ class EventResult:
     checkpoint_ok: bool | None = None
     checkpoint_kid: str | None = None
     epoch_ok: bool | None = None
+    # RFC 3161: a public TSA's signed time over the epoch root (None = no token in the bundle)
+    tsa_ok: bool | None = None
+    tsa_time: str | None = None
+    tsa_signer: str | None = None
     seq: int | None = None
     chain_tx: str | None = None
     errors: list[str] = field(default_factory=list)
@@ -133,7 +138,7 @@ class BundleResult:
         }
 
 
-def _check_event(e: dict[str, Any], checkpoint_jwks: Any) -> EventResult:
+def _check_event(e: dict[str, Any], checkpoint_jwks: Any, tsa_roots: Any = None) -> EventResult:
     r = EventResult(event_id=str(e.get("event_id")), event_type=e.get("event_type"))
     payload, canonical, ph = e.get("payload"), e.get("payload_canonical"), str(e.get("payload_hash") or "")
     # 1. canonical bytes
@@ -202,6 +207,20 @@ def _check_event(e: dict[str, Any], checkpoint_jwks: Any) -> EventResult:
             r.errors.append(f"epoch proof unreadable: {exc}")
         if r.epoch_ok is False and "epoch proof does not reach the epoch root" not in r.errors:
             r.errors.append("epoch proof does not reach the epoch root")
+        # 4b. RFC 3161: the TSA's clock over the same root, checked offline
+        if ep.get("tsa_token_b64"):
+            from .tsa import verify_token
+            try:
+                token = base64.b64decode(ep["tsa_token_b64"])
+                tr = verify_token(token, bytes.fromhex(norm_hex(ep.get("root"))), roots=tsa_roots)
+            except Exception as exc:  # noqa: BLE001
+                r.tsa_ok = False
+                r.errors.append(f"rfc3161: token unreadable: {exc}")
+            else:
+                r.tsa_ok = tr.ok
+                r.tsa_signer = tr.signer
+                r.tsa_time = tr.gen_time.isoformat().replace("+00:00", "Z") if tr.gen_time else None
+                r.errors.extend(f"rfc3161: {x}" for x in tr.errors)
     return r
 
 
@@ -284,7 +303,9 @@ def check_tx_carries_root(rpc_url: str, signature: str, program_id: str, root_he
 
 
 def verify_bundle(bundle: dict[str, Any], *, receipt_jwks: Any = None, checkpoint_jwks: Any = None,
-                  rpc: str | None = None, now: float | None = None) -> BundleResult:
+                  rpc: str | None = None, now: float | None = None, tsa_roots: Any = None) -> BundleResult:
+    """`tsa_roots`: certificates to trust for RFC 3161 tokens on epochs (None = the packaged
+    DigiCert and Sectigo roots; a list of cryptography Certificate objects to use your own)."""
     res = BundleResult(decision_id=bundle.get("decision_id"))
     if bundle.get("bundle_version") != BUNDLE_VERSION:
         res.errors.append(f"unknown bundle_version '{bundle.get('bundle_version')}'")
@@ -299,7 +320,7 @@ def verify_bundle(bundle: dict[str, Any], *, receipt_jwks: Any = None, checkpoin
         res.errors.append("bundle has no events")
         return res
     for e in events:
-        er = _check_event(e, ck)
+        er = _check_event(e, ck, tsa_roots)
         res.events.append(er)
         res.errors.extend(f"{er.event_id}: {x}" for x in er.errors)
     res.links_ok, link_errors = _check_links(events, ck)

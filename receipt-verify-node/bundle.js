@@ -3,6 +3,7 @@
 // optional on-chain check of the append / anchor transactions through a Solana RPC endpoint.
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { verify } from "./index.js";
+import { verifyToken } from "./tsa.js";
 
 export const BUNDLE_VERSION = "regent-evidence-bundle/1";
 export const CHECKPOINT_TYP = "checkpoint+jwt";
@@ -54,9 +55,10 @@ function deepEqual(a, b) {
   return false;
 }
 
-function checkEvent(e, checkpointJwks) {
+function checkEvent(e, checkpointJwks, tsaRoots) {
   const r = { event_id: String(e.event_id), event_type: e.event_type ?? null, canonical_ok: null, merkle_ok: null,
-              checkpoint_ok: null, checkpoint_kid: null, epoch_ok: null, seq: null, chain_tx: null, errors: [],
+              checkpoint_ok: null, checkpoint_kid: null, epoch_ok: null, tsa_ok: null, tsa_time: null, tsa_signer: null,
+              seq: null, chain_tx: null, errors: [],
               get ok() { return this.errors.length === 0; } };
   const ph = String(e.payload_hash || "");
   if (typeof e.payload_canonical !== "string" || !ph) { r.canonical_ok = false; r.errors.push("payload_canonical or payload_hash missing"); }
@@ -94,6 +96,14 @@ function checkEvent(e, checkpointJwks) {
     try { r.epoch_ok = normHex(merkleRootFrom(normHex(batch.root), e.epoch.proof || [], Number(e.epoch.leaf_index || 0))) === normHex(e.epoch.root); }
     catch (ex) { r.epoch_ok = false; r.errors.push(`epoch proof unreadable: ${ex.message}`); }
     if (r.epoch_ok === false && !r.errors.includes("epoch proof does not reach the epoch root")) r.errors.push("epoch proof does not reach the epoch root");
+    // 4b. RFC 3161: a public TSA's clock over the same root, checked offline
+    if (e.epoch.tsa_token_b64) {
+      try {
+        const tr = verifyToken(Buffer.from(e.epoch.tsa_token_b64, "base64"), Buffer.from(normHex(e.epoch.root), "hex"), tsaRoots);
+        r.tsa_ok = tr.ok; r.tsa_signer = tr.signer; r.tsa_time = tr.gen_time;
+        r.errors.push(...tr.errors.map((x) => `rfc3161: ${x}`));
+      } catch (ex) { r.tsa_ok = false; r.errors.push(`rfc3161: token unreadable: ${ex.message}`); }
+    }
   }
   return r;
 }
@@ -150,7 +160,7 @@ export async function checkTxCarriesRoot(rpcUrl, signature, programId, rootHex) 
 }
 
 /** Verify a bundle. `rpc` makes it async-network; without it the function never touches the network. */
-export async function verifyBundle(bundle, { receiptJwks, checkpointJwks, rpc: rpcUrl, now } = {}) {
+export async function verifyBundle(bundle, { receiptJwks, checkpointJwks, rpc: rpcUrl, now, tsaRoots } = {}) {
   const res = { valid: false, decision_id: bundle.decision_id ?? null, events: [], receipt_valid: null, receipt_anchored: null,
                 receipt_claims: {}, links_ok: null, rpc_ok: null, rpc_checks: [], errors: [], warnings: [] };
   if (bundle.bundle_version !== BUNDLE_VERSION) { res.errors.push(`unknown bundle_version '${bundle.bundle_version}'`); return res; }
@@ -160,7 +170,7 @@ export async function verifyBundle(bundle, { receiptJwks, checkpointJwks, rpc: r
   if (checkpointJwks === undefined) res.warnings.push("checkpoint key taken from the bundle itself; pass --checkpoint-jwks to use a saved one");
   const events = bundle.events || [];
   if (!events.length) { res.errors.push("bundle has no events"); return res; }
-  for (const e of events) { const er = checkEvent(e, ck); res.events.push(er); res.errors.push(...er.errors.map((x) => `${er.event_id}: ${x}`)); }
+  for (const e of events) { const er = checkEvent(e, ck, tsaRoots); res.events.push(er); res.errors.push(...er.errors.map((x) => `${er.event_id}: ${x}`)); }
   const links = checkLinks(events, ck); res.links_ok = links.linksOk; res.errors.push(...links.errors);
   const rec = bundle.receipt;
   if (rec && rec.token) {

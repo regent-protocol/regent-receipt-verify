@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "regent-receipt-verify"
-version = "0.7.0"
+version = "0.8.0"
 description = "Verify Regent Control receipts and allow tokens offline against a saved JWKS; open mandate and policy reveals"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-dependencies = ["cryptography>=41.0"]
+dependencies = ["cryptography>=41.0", "asn1crypto>=1.5.1"]
 
 [project.urls]
 Homepage = "https://github.com/regent-protocol/regent-receipt-verify"

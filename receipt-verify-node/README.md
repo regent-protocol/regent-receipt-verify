@@ -35,12 +35,13 @@ A bundle is one JSON document from the console ("Evidence bundle" on a decision 
 event) or from `GET /v1/organizations/{org}/decisions/{id}/bundle`. It carries every audit
 event of a decision with the exact bytes that were hashed, the Merkle proof to the batch root,
 Regent's signed checkpoint over that root and its chain position, the epoch proof, the
-OpenTimestamps proof, the retained receipt and the keys.
+OpenTimestamps proof, the RFC 3161 time-stamp token (0.8.0), the retained receipt and the keys.
 
 ```
 npx regent-verify bundle regent-evidence-dec_7f301d041e9f.json
 npx regent-verify bundle regent-evidence-dec_7f301d041e9f.json --jwks jwks-2026-09.json --checkpoint-jwks audit-jwks.json
 npx regent-verify bundle regent-evidence-dec_7f301d041e9f.json --rpc https://api.mainnet-beta.solana.com
+npx regent-verify bundle regent-evidence-dec_7f301d041e9f.json --tsa-root my-tsa-root.pem
 ```
 
 ```js
@@ -56,9 +57,17 @@ res.valid, res.events, res.receipt_valid, res.receipt_anchored, res.links_ok, re
 | batch proof | payload hash → Merkle proof → batch root |
 | checkpoint | Regent's RS256 statement (`typ checkpoint+jwt`) names this batch: id, seq, root, head |
 | epoch proof | batch root → epoch proof → epoch root |
+| rfc3161 | the epoch's RFC 3161 token (`tsa_token_b64`) is CMS SignedData whose TSTInfo names exactly this epoch root under SHA-256, whose signature verifies with the time-stamping certificate it carries, and whose certificate chains to a trusted root and was valid at the certified time; the line shows that time and the signer |
 | receipt | verifies, names the bundle's decision, and is byte-for-byte the one inside the anchored receipt event |
 | links | consecutive checkpoints chain (`prev_head` of N == `head` of N-1); one seq, one checkpoint |
 | on-chain (`--rpc`) | the append and anchor transactions succeeded and carry the root in an instruction to the audit program |
+
+The RFC 3161 token is the clock a bank's auditor already knows how to read: a public Time
+Stamping Authority (DigiCert or Sectigo today) signed the epoch root at seal time, so "this root
+existed no later than genTime" rests on the TSA's key, not on Regent or on any chain. The two
+TSA roots ship with the package (`tsa_roots.pem`, from the Mozilla root store); `--tsa-root`
+(`tsaRoots` in the library) adds your own. A bundle without a token reports nothing for this
+check; a token that fails any step makes the bundle INVALID.
 
 Keys default to the ones inside the bundle, which proves consistency; pass the JWKS you saved
 (`--jwks`, `--checkpoint-jwks`) to prove provenance. The checkpoint JWKS is public at

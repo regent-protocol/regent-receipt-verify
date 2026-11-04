@@ -7,15 +7,16 @@ import { verify, VERSION } from "./index.js";
 const args = process.argv.slice(2);
 if (args[0] === "bundle") {
   const { verifyBundle } = await import("./bundle.js");
-  const o = { jwks: [], checkpointJwks: [] }; let file = null;
+  const o = { jwks: [], checkpointJwks: [], tsaRoot: [] }; let file = null;
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
     if (a === "--jwks") o.jwks.push(args[++i]);
     else if (a === "--checkpoint-jwks") o.checkpointJwks.push(args[++i]);
     else if (a === "--rpc") o.rpc = args[++i];
     else if (a === "--now") o.now = Number(args[++i]);
+    else if (a === "--tsa-root") o.tsaRoot.push(args[++i]);
     else if (a === "--json") o.json = true;
-    else if (a === "--help" || a === "-h") { console.log("usage: regent-verify bundle FILE [--jwks receipt-jwks.json] [--checkpoint-jwks ck-jwks.json] [--rpc URL] [--now EPOCH] [--json]"); process.exit(0); }
+    else if (a === "--help" || a === "-h") { console.log("usage: regent-verify bundle FILE [--jwks receipt-jwks.json] [--checkpoint-jwks ck-jwks.json] [--rpc URL] [--now EPOCH] [--tsa-root root.pem] [--json]"); process.exit(0); }
     else file = a;
   }
   if (!file) { console.error("usage: regent-verify bundle FILE [--jwks ...] [--checkpoint-jwks ...] [--rpc URL] [--json]"); process.exit(2); }
@@ -24,6 +25,7 @@ if (args[0] === "bundle") {
     receiptJwks: o.jwks.length ? o.jwks.map(loadJ) : undefined,
     checkpointJwks: o.checkpointJwks.length ? o.checkpointJwks.map(loadJ) : undefined,
     rpc: o.rpc, now: o.now,
+    tsaRoots: o.tsaRoot.length ? (await import("./tsa.js")).loadRoots(o.tsaRoot.map((p) => readFileSync(p, "utf8")).join("\n")) : undefined,
   });
   if (o.json) { console.log(JSON.stringify(res, null, 2)); process.exit(res.valid ? 0 : 1); }
   const yn = (v) => (v == null ? "?" : v ? "yes" : "NO");
@@ -31,7 +33,7 @@ if (args[0] === "bundle") {
   for (const e of res.errors) console.log(`  error: ${e}`);
   for (const w of res.warnings) console.log(`  note: ${w}`);
   for (const ev of res.events) {
-    console.log(`  [${ev.ok ? "ok " : "BAD"}] ${ev.event_id} (${ev.event_type}) seq=${ev.seq} bytes=${yn(ev.canonical_ok)} batch=${yn(ev.merkle_ok)} checkpoint=${yn(ev.checkpoint_ok)}${ev.checkpoint_kid ? ` kid=${ev.checkpoint_kid}` : ""}${ev.epoch_ok != null ? ` epoch=${yn(ev.epoch_ok)}` : ""}`);
+    console.log(`  [${ev.ok ? "ok " : "BAD"}] ${ev.event_id} (${ev.event_type}) seq=${ev.seq} bytes=${yn(ev.canonical_ok)} batch=${yn(ev.merkle_ok)} checkpoint=${yn(ev.checkpoint_ok)}${ev.checkpoint_kid ? ` kid=${ev.checkpoint_kid}` : ""}${ev.epoch_ok != null ? ` epoch=${yn(ev.epoch_ok)}` : ""}${ev.tsa_ok != null ? ` rfc3161=${yn(ev.tsa_ok)}${ev.tsa_ok ? ` ${ev.tsa_time} by ${ev.tsa_signer}` : ""}` : ""}`);
     for (const e of ev.errors) console.log(`        ${e}`);
   }
   if (res.links_ok != null) console.log(`  checkpoint links: ${res.links_ok ? "consistent" : "BROKEN"}`);
