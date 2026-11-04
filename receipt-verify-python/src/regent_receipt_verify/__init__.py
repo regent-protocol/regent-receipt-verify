@@ -66,6 +66,7 @@ class VerificationResult:
     args_hash_match: bool | None = None
     mandate_match: bool | None = None
     policy_match: bool | None = None
+    payee_match: bool | None = None   # payee-v1 reveal opened the receipt's payee_hash
     # the counterparty's settlement confirmation embedded in the receipt, checked against
     # the counterparty's own JWKS (None when no counterparty JWKS was supplied)
     confirmation_match: bool | None = None
@@ -81,7 +82,7 @@ class VerificationResult:
         return {
             "valid": self.valid, "signature_valid": self.signature_valid, "kind": self.kind, "kid": self.kid,
             "expired": self.expired, "args_hash_match": self.args_hash_match, "mandate_match": self.mandate_match,
-            "policy_match": self.policy_match, "confirmation_match": self.confirmation_match,
+            "policy_match": self.policy_match, "payee_match": self.payee_match, "confirmation_match": self.confirmation_match,
             "confirmation_errors": self.confirmation_errors, "confirmation": self.confirmation,
             "errors": self.errors, "warnings": self.warnings, "header": self.header, "claims": self.claims,
         }
@@ -223,6 +224,30 @@ def check_mandate_reveal(claims: dict[str, Any], reveal: dict[str, Any]) -> bool
         return False
     canon = reveal.get("canon") if isinstance(reveal.get("canon"), str) else None
     return hmac.compare_digest(mandate_commitment(snap, salt.lower(), canon), expected.lower())
+
+
+# ── payee (payee-v1) ──────────────────────────────────────────────────────────
+
+def payee_canonical_string(payee: str, salt: str) -> str:
+    return f"payee-v1|payee={payee}|salt={salt.lower()}"
+
+
+def payee_commitment(payee: str, salt: str) -> str:
+    return hashlib.sha256(payee_canonical_string(payee, salt).encode("utf-8")).hexdigest()
+
+
+def check_payee_reveal(claims: dict[str, Any], reveal: dict[str, Any]) -> bool:
+    """`reveal` = the owner's {payee, salt} for this decision (GET …/decisions/{id}/payee-reveal).
+    The receipt carries `payee_hash` (+ `payee_commit: payee-v1`); the clear `payee` may or
+    may not be beside it. A reveal that names another decision is refused outright."""
+    expected = str(claims.get("payee_hash") or "")
+    payee = str(reveal.get("payee") or "")
+    salt = str(reveal.get("salt") or "")
+    if not expected or not payee or not salt:
+        return False
+    if reveal.get("decision_id") and claims.get("decision_id") and reveal["decision_id"] != claims["decision_id"]:
+        return False
+    return hmac.compare_digest(payee_commitment(payee, salt), expected.lower())
 
 
 # ── policy (policy-v1) ────────────────────────────────────────────────────────
@@ -404,7 +429,7 @@ def check_confirmation(claims: dict[str, Any], counterparty_jwks: Any, *, now: f
 
 def verify(token: str, jwks: Any, *, request: dict[str, Any] | None = None, mandate_reveal: dict[str, Any] | None = None,
            policy_reveal: dict[str, Any] | str | None = None, counterparty_jwks: Any = None, now: float | None = None,
-           issuer: str | None = "regent-control") -> VerificationResult:
+           issuer: str | None = "regent-control", payee_reveal: dict[str, Any] | None = None) -> VerificationResult:
     res = verify_token(token, jwks, now=now, issuer=issuer)
     if not res.signature_valid:
         return res
@@ -415,6 +440,8 @@ def verify(token: str, jwks: Any, *, request: dict[str, Any] | None = None, mand
         res.mandate_match = check_mandate_reveal(res.claims, mandate_reveal)
     if policy_reveal is not None:
         res.policy_match = check_policy_reveal(res.claims, policy_reveal)
+    if payee_reveal is not None:
+        res.payee_match = check_payee_reveal(res.claims, payee_reveal)
     if counterparty_jwks is not None:
         c = check_confirmation(res.claims, counterparty_jwks, now=now)
         res.confirmation_match, res.confirmation_errors = c.ok, c.errors

@@ -103,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--request", help='JSON {"tool","action","resource","args"} to check args_hash')
     ap.add_argument("--mandate", help="mandate version reveal JSON from the owner")
     ap.add_argument("--policy", help="policy version reveal JSON, or the Cedar text for starter-pack decisions")
+    ap.add_argument("--payee", help="payee reveal JSON {payee, salt} from the owner, opens the receipt's payee_hash")
     ap.add_argument("--counterparty-jwks", action="append",
                     help="the counterparty's JWKS, to re-verify the settlement confirmation embedded in the receipt (repeatable)")
     ap.add_argument("--issuer", default="regent-control")
@@ -116,9 +117,10 @@ def main(argv: list[str] | None = None) -> int:
                  request=_load(a.request) if a.request else None,
                  mandate_reveal=_load(a.mandate) if a.mandate else None,
                  policy_reveal=_load(a.policy) if a.policy else None,
+                 payee_reveal=_load(a.payee) if a.payee else None,
                  counterparty_jwks=[_load(p) for p in a.counterparty_jwks] if a.counterparty_jwks else None,
                  now=a.now, issuer=a.issuer or None)
-    checks = [res.args_hash_match, res.mandate_match, res.policy_match, res.confirmation_match]
+    checks = [res.args_hash_match, res.mandate_match, res.policy_match, res.payee_match, res.confirmation_match]
     ok = res.valid and all(c is not False for c in checks)
     if a.json:
         print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
@@ -131,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  note: {w}")
     if res.signature_valid:
         for k in ("decision_id", "status", "environment", "sub", "assertion_scheme", "assertion_kid", "key_custody",
-                  "amount", "currency", "payee", "mandate_id", "mandate_version",
+                  "amount", "currency", "payee", "payee_hash", "mandate_id", "mandate_version",
                   "mandate_hash", "policy_source", "policy_version", "policy_hash", "risk_model", "tool", "action",
                   "scope", "args_hash", "settlement_mismatch", "settlement_source", "settlement_ref", "settlement_network",
                   "confirmed_by", "confirmation_kid",
@@ -139,9 +141,12 @@ def main(argv: list[str] | None = None) -> int:
             if k in c:
                 print(f"  {k}: {c[k]}")
         for label, val in (("request binding (args_hash)", res.args_hash_match), ("mandate reveal", res.mandate_match),
-                           ("policy reveal", res.policy_match), ("counterparty confirmation", res.confirmation_match)):
+                           ("policy reveal", res.policy_match), ("payee reveal", res.payee_match),
+                           ("counterparty confirmation", res.confirmation_match)):
             if val is not None:
                 print(f"  {label}: {'MATCH' if val else 'NO MATCH'}")
+        if "payee_hash" in c and "payee" not in c and res.payee_match is None:
+            print("  payee: committed (hidden by the organization); pass --payee reveal.json to open it")
         for e in res.confirmation_errors:
             print(f"    confirmation: {e}")
         if res.confirmation:

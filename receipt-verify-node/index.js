@@ -31,7 +31,7 @@ const safeEq = (a, b) => {
 /** Signature + structure. Never throws on bad input. */
 export function verifyToken(token, jwks, { now = Date.now() / 1000, issuer = "regent-control" } = {}) {
   const res = { signatureValid: false, kind: "unknown", header: {}, claims: {}, kid: null, expired: null, errors: [], warnings: [],
-                argsHashMatch: null, mandateMatch: null, policyMatch: null,
+                argsHashMatch: null, mandateMatch: null, policyMatch: null, payeeMatch: null,
                 confirmationMatch: null, confirmationErrors: [], confirmation: null,
                 get valid() { return this.signatureValid && this.errors.length === 0; } };
   const parts = String(token || "").trim().split(".");
@@ -107,6 +107,18 @@ export function checkMandateReveal(claims, reveal) {
   if (snap.version !== undefined && claims.mandate_version != null && Number(snap.version) !== Number(claims.mandate_version)) return false;
   const canon = reveal && typeof reveal.canon === "string" ? reveal.canon : undefined;
   return safeEq(mandateCommitment(snap, salt.toLowerCase(), canon), expected.toLowerCase());
+}
+
+// ── payee (payee-v1) ──
+export const payeeCanonicalString = (payee, salt) => `payee-v1|payee=${payee}|salt=${String(salt).toLowerCase()}`;
+export const payeeCommitment = (payee, salt) => sha256(payeeCanonicalString(payee, salt));
+/** reveal = the owner's {payee, salt} for this decision; opens the receipt's payee_hash. */
+export function checkPayeeReveal(claims, reveal) {
+  const expected = String(claims.payee_hash || "");
+  const payee = String((reveal && reveal.payee) || ""), salt = String((reveal && reveal.salt) || "");
+  if (!expected || !payee || !salt) return false;
+  if (reveal.decision_id && claims.decision_id && reveal.decision_id !== claims.decision_id) return false;
+  return safeEq(payeeCommitment(payee, salt), expected.toLowerCase());
 }
 
 // ── policy (policy-v1) ──
@@ -200,12 +212,13 @@ export function checkConfirmation(claims, counterpartyJwks, { now } = {}) {
 }
 
 /** One call: signature, structure, and each optional check. */
-export function verify(token, jwks, { request, mandateReveal, policyReveal, counterpartyJwks, now, issuer } = {}) {
+export function verify(token, jwks, { request, mandateReveal, policyReveal, payeeReveal, counterpartyJwks, now, issuer } = {}) {
   const res = verifyToken(token, jwks, { now, issuer });
   if (!res.signatureValid) return res;
   if (request) res.argsHashMatch = checkRequestBinding(res.claims, request);
   if (mandateReveal) res.mandateMatch = checkMandateReveal(res.claims, mandateReveal);
   if (policyReveal !== undefined && policyReveal !== null) res.policyMatch = checkPolicyReveal(res.claims, policyReveal);
+  if (payeeReveal) res.payeeMatch = checkPayeeReveal(res.claims, payeeReveal);
   if (counterpartyJwks !== undefined && counterpartyJwks !== null) {
     const c = checkConfirmation(res.claims, counterpartyJwks, { now });
     res.confirmationMatch = c.ok; res.confirmationErrors = c.errors; res.confirmation = c.ok ? c.claims : null;
