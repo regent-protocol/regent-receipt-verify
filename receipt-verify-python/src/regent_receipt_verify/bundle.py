@@ -325,6 +325,15 @@ def verify_bundle(bundle: dict[str, Any], *, receipt_jwks: Any = None, checkpoin
         res.errors.extend(f"{er.event_id}: {x}" for x in er.errors)
     res.links_ok, link_errors = _check_links(events, ck)
     res.errors.extend(link_errors)
+    # A decision completed more than once (the provider refused the first call, the
+    # agent retried) carries a receipt per attempt; the highest attempt is its state.
+    receipts = [e for e in events if e.get("event_type") == "control.decision.receipt"]
+    if len(receipts) > 1:
+        latest = max(receipts, key=lambda e: int((e.get("payload") or {}).get("attempt") or 1))
+        res.warnings.append(
+            f"{len(receipts)} receipts in the trail (attempts "
+            + ", ".join(str((e.get('payload') or {}).get('attempt') or 1) for e in receipts)
+            + f"); the current one is {latest.get('event_id')} — earlier receipts are history, not the decision's state")
     # 5. receipt
     rec = bundle.get("receipt")
     if rec and rec.get("token"):

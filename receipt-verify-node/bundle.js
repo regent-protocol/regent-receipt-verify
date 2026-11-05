@@ -172,6 +172,13 @@ export async function verifyBundle(bundle, { receiptJwks, checkpointJwks, rpc: r
   if (!events.length) { res.errors.push("bundle has no events"); return res; }
   for (const e of events) { const er = checkEvent(e, ck, tsaRoots); res.events.push(er); res.errors.push(...er.errors.map((x) => `${er.event_id}: ${x}`)); }
   const links = checkLinks(events, ck); res.links_ok = links.linksOk; res.errors.push(...links.errors);
+  // a decision completed more than once carries a receipt per attempt; the highest attempt is its state
+  const receipts = events.filter((e) => e.event_type === "control.decision.receipt");
+  if (receipts.length > 1) {
+    const att = (e) => Number((e.payload || {}).attempt || 1);
+    const latest = receipts.reduce((a, b) => (att(b) > att(a) ? b : a));
+    res.warnings.push(`${receipts.length} receipts in the trail (attempts ${receipts.map(att).join(", ")}); the current one is ${latest.event_id} — earlier receipts are history, not the decision's state`);
+  }
   const rec = bundle.receipt;
   if (rec && rec.token) {
     if (rk == null) { res.warnings.push("receipt present but no receipt JWKS (bundle or --jwks); receipt not verified"); }
