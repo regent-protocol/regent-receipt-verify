@@ -325,6 +325,27 @@ def verify_bundle(bundle: dict[str, Any], *, receipt_jwks: Any = None, checkpoin
         res.errors.extend(f"{er.event_id}: {x}" for x in er.errors)
     res.links_ok, link_errors = _check_links(events, ck)
     res.errors.extend(link_errors)
+    # What offline verification binds, and what it cannot (05.11.2026): every event here
+    # must be about THIS decision and appear once; a bundle with an event removed or
+    # another decision's event pasted in used to verify VALID. Completeness (that no
+    # event is missing) is not provable offline: the organization's trail is the record.
+    if res.decision_id:
+        for e in events:
+            named = (e.get("payload") or {}).get("decision_id")
+            if named and str(named) != str(res.decision_id):
+                res.errors.append(f"{e.get('event_id')}: names decision {named}, this bundle is for {res.decision_id}")
+    seen_ids: set[str] = set()
+    for e in events:
+        eid = str(e.get("event_id"))
+        if eid in seen_ids:
+            res.errors.append(f"{eid}: appears more than once in the bundle")
+        seen_ids.add(eid)
+    for e in events:
+        ep = e.get("epoch") or {}
+        if ep and not ep.get("tx") and not ep.get("tsa_token_b64"):
+            res.warnings.append(f"{e.get('event_id')}: the epoch root is not anchored in this bundle (no transaction, "
+                                "no RFC 3161 token); its proof only ties the batch to a root — pass --rpc or ask for a bundle with the anchor")
+            break
     # A decision completed more than once (the provider refused the first call, the
     # agent retried) carries a receipt per attempt; the highest attempt is its state.
     receipts = [e for e in events if e.get("event_type") == "control.decision.receipt"]

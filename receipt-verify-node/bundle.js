@@ -172,6 +172,22 @@ export async function verifyBundle(bundle, { receiptJwks, checkpointJwks, rpc: r
   if (!events.length) { res.errors.push("bundle has no events"); return res; }
   for (const e of events) { const er = checkEvent(e, ck, tsaRoots); res.events.push(er); res.errors.push(...er.errors.map((x) => `${er.event_id}: ${x}`)); }
   const links = checkLinks(events, ck); res.links_ok = links.linksOk; res.errors.push(...links.errors);
+  // what offline verification binds (05.11.2026): every event is about THIS decision and appears once;
+  // completeness (that none is missing) is not provable offline — the organization's trail is the record
+  if (res.decision_id) {
+    for (const e of events) {
+      const named = (e.payload || {}).decision_id;
+      if (named && String(named) !== String(res.decision_id)) res.errors.push(`${e.event_id}: names decision ${named}, this bundle is for ${res.decision_id}`);
+    }
+  }
+  const seenIds = new Set();
+  for (const e of events) {
+    const id = String(e.event_id);
+    if (seenIds.has(id)) res.errors.push(`${id}: appears more than once in the bundle`);
+    seenIds.add(id);
+  }
+  const unanchored = events.find((e) => e.epoch && !e.epoch.tx && !e.epoch.tsa_token_b64);
+  if (unanchored) res.warnings.push(`${unanchored.event_id}: the epoch root is not anchored in this bundle (no transaction, no RFC 3161 token); its proof only ties the batch to a root — pass --rpc or ask for a bundle with the anchor`);
   // a decision completed more than once carries a receipt per attempt; the highest attempt is its state
   const receipts = events.filter((e) => e.event_type === "control.decision.receipt");
   if (receipts.length > 1) {

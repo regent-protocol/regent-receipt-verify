@@ -69,6 +69,12 @@ TSA roots ship with the package (`tsa_roots.pem`, from the Mozilla root store); 
 (`tsaRoots` in the library) adds your own. A bundle without a token reports nothing for this
 check; a token that fails any step makes the bundle INVALID.
 
+**What VALID binds, and what it cannot.** Every event verifies on its own bytes, its batch proof
+and Regent's signed checkpoint; every event names this decision and appears once; the current receipt
+is the highest attempt. What offline verification cannot prove is completeness: that no event of the
+decision was left out of the file. For that, the organization's own trail (or the API that served the
+bundle) is the record; a bundle is evidence for the events it carries.
+
 Keys default to the ones inside the bundle, which proves consistency; pass the JWKS you saved
 (`--jwks`, `--checkpoint-jwks`) to prove provenance. The checkpoint JWKS is public at
 `https://api.regentprotocol.org/v1/audit/.well-known/jwks.json`.
