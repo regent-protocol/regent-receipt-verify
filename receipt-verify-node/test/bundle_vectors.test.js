@@ -309,7 +309,7 @@ test("the package exports work as documented", () => {
   const c = B.approvals.the_evidence_the_receipt_names;
   const res = pkg.verifyApproval(c.approval, c.anchored);
   assert.equal(res.verdict, "NOT CHECKED"); assert.equal(res.valid, null); assert.equal(res.signed.evidence_ok, true);
-  assert.equal(pkg.VERSION, "0.9.1");
+  assert.equal(pkg.VERSION, "0.9.2");
 });
 
 test("a reader that goes away gets no stack trace, and the exit code still says the verdict", async () => {

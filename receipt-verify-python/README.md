@@ -183,6 +183,9 @@ reported as `NOT CHECKED`.
   decimal point (40.0), in exponent form or beyond 2**53 hash differently in Node, which
   reads them as another double: give such values as integers or text. And a command-line
   argument that is not valid UTF-8 reaches Python as escaped bytes and Node as U+FFFD.
+- **0.9.2 is 0.9.1 again.** The same code, published by this repository's release workflow
+  with a provenance attestation. 0.9.1 was uploaded by hand and carries none, which the
+  registries flag; install 0.9.2 or later.
 - **What 0.9.1 fixes in 0.9.0.** 0.9.0 said nothing about an approval block: a bundle whose
   approval evidence had been altered or replaced was `VALID`, and one whose block had been
   removed said nothing either (0.9.1 still calls that bundle `VALID`, and says in its

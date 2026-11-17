@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from .approval import ApprovalResult, SignedApproval, verify_approval  # approval.py imports nothing from here
 from .strict import Malformed, _as_double, _same, compact_jws, confirmation_key, jwk_list, number_text, rs256_ok, show
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 __all__ = [
     "VerificationResult", "ConfirmationCheck", "verify_token", "verify", "canonical_args_hash",
     "check_request_binding", "mandate_commitment", "check_mandate_reveal", "policy_commitment",

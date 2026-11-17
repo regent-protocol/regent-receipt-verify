@@ -360,7 +360,7 @@ def test_the_package_exports_work_as_documented():
     res = pkg.verify_approval(c["approval"], receipt_claims=c["anchored"])
     assert isinstance(res, pkg.ApprovalResult) and res.verdict == "NOT CHECKED" and res.valid is None
     assert isinstance(res.signed, pkg.SignedApproval) and res.signed.evidence_ok is True
-    assert pkg.__version__ == "0.9.1"
+    assert pkg.__version__ == "0.9.2"
 
 
 @pytest.mark.parametrize("mode", [[], ["--json"]])

@@ -5,7 +5,7 @@
 import { constants, createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from "node:crypto";
 import { Malformed, compactJws, confirmationKey, jwkList, rs256Ok, same, show } from "./strict.js";
 
-export const VERSION = "0.9.1";
+export const VERSION = "0.9.2";
 
 const b64url = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
