@@ -13,6 +13,8 @@ import base64
 import hashlib
 import hmac
 import json
+import math
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,11 +24,15 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-__version__ = "0.7.0"
+from .approval import ApprovalResult, SignedApproval, verify_approval  # approval.py imports nothing from here
+from .strict import Malformed, _as_double, _same, compact_jws, confirmation_key, jwk_list, number_text, rs256_ok, show
+
+__version__ = "0.9.1"
 __all__ = [
     "VerificationResult", "ConfirmationCheck", "verify_token", "verify", "canonical_args_hash",
     "check_request_binding", "mandate_commitment", "check_mandate_reveal", "policy_commitment",
     "check_policy_reveal", "check_confirmation", "verify_bundle", "BundleResult",
+    "verify_approval", "ApprovalResult", "SignedApproval",
 ]
 
 
@@ -42,14 +48,7 @@ def _b64url_uint(s: str) -> int:
 
 def _keys(jwks: Any) -> list[dict[str, Any]]:
     """Accept a JWKS dict, a list of JWKS dicts (key rotation), or a list of JWKs."""
-    if isinstance(jwks, dict) and "keys" in jwks:
-        return list(jwks["keys"])
-    if isinstance(jwks, dict):
-        return [jwks]
-    out: list[dict[str, Any]] = []
-    for item in jwks or []:
-        out.extend(_keys(item))
-    return out
+    return jwk_list(jwks)
 
 
 @dataclass
@@ -88,8 +87,75 @@ class VerificationResult:
         }
 
 
+def _finite_number(value: Any) -> bool:
+    """A JSON number that is finite as a double reads it: an integer of 400 digits is not."""
+    return _is_number(value) and math.isfinite(_as_double(value))
+
+
+def _wf(text: Any) -> bool:
+    """Text that UTF-8 can carry: no lone surrogate (JSON can spell one, "\\ud800")."""
+    if not isinstance(text, str):
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+_DECIMAL = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+
+
+def _amount(value: Any) -> float | None:
+    """An amount: a finite JSON number, or a plain decimal string ("12.50"). Anything else,
+    NaN and "nan" included, is not an amount."""
+    if _finite_number(value):
+        return float(value)
+    if isinstance(value, str) and _DECIMAL.fullmatch(value):
+        x = float(value)
+        return x if x not in (float("inf"), float("-inf")) else None   # 309 digits and more: not an amount
+    return None
+
+
+_HEX64 = re.compile(r"[0-9a-fA-F]{64}")
+_SAFE = 2**53 - 1   # beyond it two integers read as one double in JavaScript
+
+
+def _whole(value: Any) -> int | None:
+    """A whole number as JSON carries it (12 or 12.0, within 2**53 - 1), else None."""
+    if not _finite_number(value) or abs(value) > _SAFE:
+        return None
+    return int(value) if float(value).is_integer() else None
+
+
+def _lower_ascii(text: str) -> str:
+    return text.lower() if text.isascii() else text
+
+
+def _amount_text(value: Any) -> str:
+    return value if isinstance(value, str) else (number_text(value) or show(value))
+
+
+def _given(value: Any) -> bool:
+    """Present in the sense both languages agree on: not absent, null, empty text or false."""
+    return value is not None and value is not False and value != ""
+
+
+def _upper_ascii(value: Any) -> Any:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return object()            # not text: equal to nothing
+    return value.upper() if value.isascii() else value
+
+
+def _is_number(value: Any) -> bool:
+    """A JSON number: in Python `True` is an int, in JSON it is not a number."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _kind(header: dict[str, Any], claims: dict[str, Any]) -> str:
-    typ = str(header.get("typ") or "")
+    typ = header.get("typ") if isinstance(header.get("typ"), str) else ""
     if typ == "receipt+jwt" or claims.get("aud") == "regent-receipt":
         return "receipt"
     if typ == "aa-auth+jwt" or "budget" in claims:
@@ -101,44 +167,37 @@ def _kind(header: dict[str, Any], claims: dict[str, Any]) -> str:
 
 def verify_token(token: str, jwks: Any, *, now: float | None = None, issuer: str | None = "regent-control") -> VerificationResult:
     """Signature + structure. Returns a result even for invalid tokens (never raises on bad input)."""
+    if now is not None and not _finite_number(now):
+        return VerificationResult(False, "unknown", errors=["now is not a finite number of seconds"])
     now = time.time() if now is None else now
-    parts = token.strip().split(".")
-    if len(parts) != 3:
-        return VerificationResult(False, "unknown", errors=["not a compact JWS (expected header.payload.signature)"])
     try:
-        header = json.loads(_b64url_decode(parts[0]))
-        claims = json.loads(_b64url_decode(parts[1]))
-        signature = _b64url_decode(parts[2])
-    except Exception as exc:  # noqa: BLE001
-        return VerificationResult(False, "unknown", errors=[f"cannot decode token: {exc}"])
+        header, claims, signature, signed = compact_jws(token)
+    except Malformed as exc:
+        text = str(exc)
+        return VerificationResult(False, "unknown", errors=[text if text.startswith("not a compact JWS") else f"cannot decode token: {text}"])
     res = VerificationResult(False, _kind(header, claims), header=header, claims=claims, kid=header.get("kid"))
     if header.get("alg") != "RS256":
-        res.errors.append(f"unsupported alg {header.get('alg')!r} (Regent signs RS256)")
+        res.errors.append(f"unsupported alg '{show(header.get('alg'))}' (Regent signs RS256)")
         return res
     candidates = [k for k in _keys(jwks) if k.get("kty") == "RSA" and (res.kid is None or k.get("kid") == res.kid)]
     if not candidates:
-        res.errors.append(f"no RSA key with kid {res.kid!r} in the JWKS you supplied")
+        res.errors.append(f"no RSA key with kid '{show(res.kid)}' in the JWKS you supplied")
         return res
-    signed = f"{parts[0]}.{parts[1]}".encode("ascii")
     for k in candidates:
-        try:
-            pub = rsa.RSAPublicNumbers(_b64url_uint(k["e"]), _b64url_uint(k["n"])).public_key()
-            pub.verify(signature, signed, padding.PKCS1v15(), hashes.SHA256())
+        if rs256_ok(k, signed, signature):
             res.signature_valid = True
-            res.kid = k.get("kid")
+            res.kid = k.get("kid") if isinstance(k.get("kid"), str) else None
             break
-        except (InvalidSignature, ValueError, KeyError):
-            continue
     if not res.signature_valid:
         res.errors.append("signature does not verify against the supplied key(s)")
         return res
     # structure
     if issuer and claims.get("iss") != issuer:
-        res.errors.append(f"issuer is {claims.get('iss')!r}, expected {issuer!r}")
+        res.errors.append(f"issuer is '{show(claims.get('iss'))}', expected '{issuer}'")
     if res.kind == "receipt" and claims.get("aud") != "regent-receipt":
         res.errors.append("receipt audience must be 'regent-receipt'")
     exp = claims.get("exp")
-    if isinstance(exp, (int, float)):
+    if _is_number(exp):
         res.expired = exp < now
         if res.expired:
             if res.kind == "receipt":
@@ -146,10 +205,8 @@ def verify_token(token: str, jwks: Any, *, now: float | None = None, issuer: str
             else:
                 res.warnings.append("token expired (allow tokens live about a minute; signature and binding still verify)")
     iat = claims.get("iat")
-    if isinstance(iat, (int, float)) and iat > now + 300:
+    if _is_number(iat) and iat > now + 300:
         res.errors.append("issued in the future (iat)")
-    if res.kind == "allow" and "scope" in claims and claims.get("scope") != f"{claims.get('aud')}:{claims.get('scope','').split(':', 1)[-1]}":
-        res.warnings.append("scope does not start with the audience tool")
     return res
 
 
@@ -184,16 +241,27 @@ MANDATE_FIELDS = MANDATE_FIELDS_V4
 _MANDATE_CANONS = {"terms-v2": MANDATE_FIELDS_V2, "terms-v3": MANDATE_FIELDS_V3, "terms-v4": MANDATE_FIELDS_V4}
 
 
+class _NotCanonical(ValueError):
+    """A snapshot value of a type the canonical string does not define."""
+
+
 def _cv(value: Any) -> str:
+    """One snapshot value in the canonical string: none, true, false, text, a number as
+    JavaScript prints it, or a list of texts joined by commas. Anything else is not part of
+    the format, and a reveal that carries it matches nothing (in both languages alike)."""
     if value is None:
         return "none"
     if value is True:
         return "true"
     if value is False:
         return "false"
-    if isinstance(value, (list, tuple)):
-        return ",".join(str(v) for v in value)
-    return str(value)
+    if isinstance(value, str) and _wf(value):
+        return value
+    if _finite_number(value):
+        return number_text(value)
+    if isinstance(value, list) and all(_wf(v) for v in value):
+        return ",".join(value)
+    raise _NotCanonical("snapshot value of another type")
 
 
 def mandate_canon(snapshot: dict[str, Any], canon: str | None = None) -> str:
@@ -214,22 +282,30 @@ def mandate_commitment(snapshot: dict[str, Any], salt: str, canon: str | None = 
 
 
 def check_mandate_reveal(claims: dict[str, Any], reveal: dict[str, Any]) -> bool:
-    """`reveal` = the owner's version object ({snapshot, salt, ...}) or {snapshot, salt}."""
-    expected = str(claims.get("mandate_hash") or "")
+    """`reveal` = the owner's version object ({snapshot, salt, ...}) or {snapshot, salt}.
+    Values of a type the format does not define match nothing; this never raises."""
+    if not isinstance(claims, dict) or not isinstance(reveal, dict):
+        return False
+    expected, salt = claims.get("mandate_hash"), reveal.get("salt")
     snap = reveal.get("snapshot") if isinstance(reveal.get("snapshot"), dict) else reveal
-    salt = str(reveal.get("salt") or "")
-    if not expected or not salt:
+    if not (isinstance(expected, str) and _HEX64.fullmatch(expected) and _wf(salt) and salt):
         return False
-    if "version" in snap and claims.get("mandate_version") is not None and int(snap["version"]) != int(claims["mandate_version"]):
-        return False
+    if snap.get("version") is not None and claims.get("mandate_version") is not None:
+        mine, theirs = _whole(snap.get("version")), _whole(claims.get("mandate_version"))
+        if mine is None or theirs is None or mine != theirs:
+            return False
     canon = reveal.get("canon") if isinstance(reveal.get("canon"), str) else None
-    return hmac.compare_digest(mandate_commitment(snap, salt.lower(), canon), expected.lower())
+    try:
+        got = mandate_commitment(snap, _lower_ascii(salt), canon)
+    except _NotCanonical:
+        return False
+    return hmac.compare_digest(got, expected.lower())
 
 
 # ── payee (payee-v1) ──────────────────────────────────────────────────────────
 
 def payee_canonical_string(payee: str, salt: str) -> str:
-    return f"payee-v1|payee={payee}|salt={salt.lower()}"
+    return f"payee-v1|payee={payee}|salt={_lower_ascii(salt)}"
 
 
 def payee_commitment(payee: str, salt: str) -> str:
@@ -240,17 +316,57 @@ def check_payee_reveal(claims: dict[str, Any], reveal: dict[str, Any]) -> bool:
     """`reveal` = the owner's {payee, salt} for this decision (GET …/decisions/{id}/payee-reveal).
     The receipt carries `payee_hash` (+ `payee_commit: payee-v1`); the clear `payee` may or
     may not be beside it. A reveal that names another decision is refused outright."""
-    expected = str(claims.get("payee_hash") or "")
-    payee = str(reveal.get("payee") or "")
-    salt = str(reveal.get("salt") or "")
-    if not expected or not payee or not salt:
+    if not isinstance(claims, dict) or not isinstance(reveal, dict):
         return False
-    if reveal.get("decision_id") and claims.get("decision_id") and reveal["decision_id"] != claims["decision_id"]:
+    expected, payee, salt = claims.get("payee_hash"), reveal.get("payee"), reveal.get("salt")
+    if not (isinstance(expected, str) and _HEX64.fullmatch(expected) and _wf(payee) and payee and _wf(salt) and salt):
         return False
-    return hmac.compare_digest(payee_commitment(payee, salt), expected.lower())
+    if _given(reveal.get("decision_id")) and _given(claims.get("decision_id")) and not _same(reveal["decision_id"], claims["decision_id"]):
+        return False
+    return hmac.compare_digest(payee_commitment(payee, _lower_ascii(salt)), expected.lower())
 
 
 # ── policy (policy-v1) ────────────────────────────────────────────────────────
+
+class _NotPortable(ValueError):
+    pass
+
+
+def _portable(value: Any, depth: int = 0) -> Any:
+    if depth > 64:
+        raise _NotPortable("nested too deeply")
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if not _wf(value):
+            raise _NotPortable("text that is not valid")
+        return value
+    if _is_number(value):
+        w = _whole(value)
+        if w is None:
+            raise _NotPortable("a number other than a whole number within 2**53 - 1")
+        return w   # 40.0 is 40, as JavaScript reads it
+    if isinstance(value, list):
+        return [_portable(v, depth + 1) for v in value]
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if not (_wf(k) and all(ord(ch) <= 0xFFFF for ch in k)):
+                raise _NotPortable("a key outside the basic plane")
+            out[k] = _portable(v, depth + 1)
+        return out
+    raise _NotPortable("a value of another type")
+
+
+def _profile(profile: dict[str, Any]) -> dict[str, Any] | None:
+    """A policy profile both languages hash to the same bytes: text, booleans, null, whole
+    numbers within 2**53 - 1, lists and objects of those, keys inside the basic plane. A
+    profile with anything else (a fraction, 1e16, a key above U+FFFF) matches nothing."""
+    try:
+        return _portable(profile)
+    except _NotPortable:
+        return None
+
 
 def _text_digest(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
@@ -270,22 +386,32 @@ def policy_commitment(org_id: str, version: int, cedar_text: str, profile: dict[
 def check_policy_reveal(claims: dict[str, Any], reveal: dict[str, Any] | str) -> bool:
     """`reveal` = the org's version object ({org_id, version, cedar_text, profile, salt}); for a
     starter-pack or legacy decision the Cedar text alone (str or {cedar_text})."""
-    expected = str(claims.get("policy_hash") or "")
-    if not expected:
+    if not isinstance(claims, dict):
+        return False
+    expected = claims.get("policy_hash")
+    if not (isinstance(expected, str) and _HEX64.fullmatch(expected)):
         return False
     if isinstance(reveal, str):
         reveal = {"cedar_text": reveal}
+    if not isinstance(reveal, dict):
+        return False
     text = reveal.get("cedar_text") if isinstance(reveal.get("cedar_text"), str) else reveal.get("cedar")
-    if not isinstance(text, str):
+    if not _wf(text):
         return False
     if claims.get("policy_source") in ("starter", "legacy"):
         return hmac.compare_digest(_text_digest(text), expected.lower())
+    version = _whole(reveal["version"] if reveal.get("version") is not None else claims.get("policy_version"))
+    org_id, salt = reveal.get("org_id"), reveal.get("salt")
+    if version is None or not (org_id is None or _wf(org_id)) or not (salt is None or _wf(salt)):
+        return False
+    profile = reveal.get("profile") if isinstance(reveal.get("profile"), dict) else None
+    if profile is not None:
+        profile = _profile(profile)
+        if profile is None:
+            return False
     try:
-        version = reveal["version"] if reveal.get("version") is not None else claims.get("policy_version")
-        got = policy_commitment(str(reveal.get("org_id") or ""), int(version), text,
-                                reveal.get("profile") if isinstance(reveal.get("profile"), dict) else None,
-                                str(reveal.get("salt") or "").lower())
-    except (TypeError, ValueError):
+        got = policy_commitment(org_id or "", version, text, profile, _lower_ascii(salt or ""))
+    except (TypeError, ValueError, RecursionError):
         return False
     return hmac.compare_digest(got, expected.lower())
 
@@ -321,17 +447,6 @@ class ConfirmationCheck:
     claims: dict[str, Any] = field(default_factory=dict)
 
 
-def _jwk_public_key(k: dict[str, Any]) -> Any:
-    kty = k.get("kty")
-    if kty == "RSA":
-        return rsa.RSAPublicNumbers(_b64url_uint(k["e"]), _b64url_uint(k["n"])).public_key()
-    if kty == "EC" and k.get("crv") == "P-256":
-        return ec.EllipticCurvePublicNumbers(_b64url_uint(k["x"]), _b64url_uint(k["y"]), ec.SECP256R1()).public_key()
-    if kty == "OKP" and k.get("crv") == "Ed25519":
-        return ed25519.Ed25519PublicKey.from_public_bytes(_b64url_decode(k["x"]))
-    raise ValueError(f"unsupported key type {kty}/{k.get('crv')}")
-
-
 def _jws_signature_ok(alg: str, key: Any, signed: bytes, sig: bytes) -> bool:
     try:
         if alg == "ES256":
@@ -357,72 +472,82 @@ def check_confirmation(claims: dict[str, Any], counterparty_jwks: Any, *, now: f
     and check it says the same as the receipt. `claims` are the (already verified) receipt claims.
     Never raises on bad input."""
     out = ConfirmationCheck(False)
+    try:
+        _check_confirmation(out, claims, counterparty_jwks, now)
+    except Exception as exc:  # noqa: BLE001 — a verifier answers "does not match", it does not crash
+        out.errors.append(f"the confirmation could not be read ({type(exc).__name__})")
+    out.ok = not out.errors
+    return out
+
+
+def _check_confirmation(out: ConfirmationCheck, claims: Any, counterparty_jwks: Any, now: Any) -> None:
+    claims = claims if isinstance(claims, dict) else {}
     jws = claims.get("confirmation")
     if not isinstance(jws, str) or jws.count(".") != 2:
         out.errors.append("the receipt carries no counterparty confirmation (settlement is agent-reported)")
-        return out
-    parts = jws.split(".")
+        return
+    if now is not None and not _finite_number(now):
+        out.errors.append("now is not a finite number of seconds")
+        return
     try:
-        header = json.loads(_b64url_decode(parts[0]))
-        payload = json.loads(_b64url_decode(parts[1]))
-        signature = _b64url_decode(parts[2])
-    except Exception as exc:  # noqa: BLE001
+        header, payload, signature, signed = compact_jws(jws)   # the one strict reader: no NaN, no BOM, one spelling
+    except Malformed as exc:
         out.errors.append(f"cannot decode the confirmation: {exc}")
-        return out
+        return
     out.claims, out.kid, out.issuer = payload, header.get("kid"), payload.get("iss")
     if header.get("typ") != CONFIRMATION_TYP:
-        out.errors.append(f"confirmation typ is {header.get('typ')!r}, expected {CONFIRMATION_TYP!r}")
+        out.errors.append(f"confirmation typ is '{show(header.get('typ'))}', expected '{CONFIRMATION_TYP}'")
     alg = header.get("alg")
     if alg not in CONFIRMATION_ALGS:
-        out.errors.append(f"unsupported confirmation alg {alg!r}")
-        return out
+        out.errors.append(f"unsupported confirmation alg '{show(alg)}'")
+        return
     candidates = [k for k in _keys(counterparty_jwks) if out.kid is None or k.get("kid") == out.kid]
     if not candidates:
-        out.errors.append(f"no key with kid {out.kid!r} in the counterparty JWKS you supplied")
-        return out
-    signed = f"{parts[0]}.{parts[1]}".encode("ascii")
+        out.errors.append(f"no key with kid '{show(out.kid)}' in the counterparty JWKS you supplied")
+        return
     sig_ok = False
     for k in candidates:
         try:
-            key = _jwk_public_key(k)
-        except (ValueError, KeyError):
+            key = confirmation_key(k, alg)   # the one key type this algorithm uses, read strictly
+        except Malformed:
             continue
         if _jws_signature_ok(alg, key, signed, signature):
             sig_ok, out.kid = True, k.get("kid")
             break
     if not sig_ok:
         out.errors.append("confirmation signature does not verify against the counterparty key(s)")
-        return out
+        return
     # the confirmation must be the one the receipt cites, about this decision, saying the same thing
     expected_hash = claims.get("confirmation_hash")
-    if expected_hash and not hmac.compare_digest(hashlib.sha256(jws.encode("ascii")).hexdigest(), str(expected_hash).lower()):
+    if _given(expected_hash) and not (isinstance(expected_hash, str) and _HEX64.fullmatch(expected_hash) and hmac.compare_digest(
+            hashlib.sha256(jws.encode("ascii")).hexdigest(), expected_hash.lower())):
         out.errors.append("confirmation_hash in the receipt does not match the embedded confirmation")
-    if claims.get("confirmed_by") and payload.get("iss") != claims.get("confirmed_by"):
-        out.errors.append(f"confirmation issuer {payload.get('iss')!r} differs from the receipt's confirmed_by")
-    if claims.get("confirmation_kid") and out.kid != claims.get("confirmation_kid"):
+    if _given(claims.get("confirmed_by")) and not _same(payload.get("iss"), claims.get("confirmed_by")):
+        out.errors.append(f"confirmation issuer '{show(payload.get('iss'))}' differs from the receipt's confirmed_by")
+    if _given(claims.get("confirmation_kid")) and not _same(out.kid, claims.get("confirmation_kid")):
         out.errors.append("confirmation kid differs from the receipt's confirmation_kid")
-    if payload.get("decision_id") != claims.get("decision_id"):
+    if not _same(payload.get("decision_id"), claims.get("decision_id")):
         out.errors.append("the confirmation is about another decision")
-    if payload.get("status") != claims.get("status"):
-        out.errors.append(f"confirmation status {payload.get('status')!r} differs from the receipt's {claims.get('status')!r}")
+    if not _same(payload.get("status"), claims.get("status")):
+        out.errors.append(f"confirmation status '{show(payload.get('status'))}' differs from the receipt's '{show(claims.get('status'))}'")
     p_amount, r_amount = payload.get("amount"), claims.get("amount")
     if p_amount is not None and r_amount is not None:
-        try:
-            if abs(float(p_amount) - float(r_amount)) > 0.01:
-                out.errors.append(f"confirmation amount {p_amount} differs from the receipt's {r_amount}")
-        except (TypeError, ValueError):
+        p, r = _amount(p_amount), _amount(r_amount)
+        if p is None or r is None:
             out.errors.append("confirmation amount is not a number")
-        if str(payload.get("currency") or "").upper() != str(claims.get("currency") or "").upper():
+        elif abs(p - r) > 0.01:
+            out.errors.append(f"confirmation amount {_amount_text(p_amount)} differs from the receipt's {_amount_text(r_amount)}")
+        cp, cr = _upper_ascii(payload.get("currency")), _upper_ascii(claims.get("currency"))
+        if not (isinstance(cp, str) and isinstance(cr, str) and cp == cr):
             out.errors.append("confirmation currency differs from the receipt's")
     # time: the confirmation had to be live when Regent accepted it, i.e. at the receipt's iat
-    accepted_at = claims.get("iat") if isinstance(claims.get("iat"), (int, float)) else (time.time() if now is None else now)
+    iat_r = claims.get("iat")
+    accepted_at = iat_r if _finite_number(iat_r) else (time.time() if now is None else now)
     exp, iat = payload.get("exp"), payload.get("iat")
-    if isinstance(exp, (int, float)) and exp < accepted_at:
+    if _finite_number(exp) and exp < accepted_at:
         out.errors.append("the confirmation had already expired when the receipt was minted")
-    if isinstance(iat, (int, float)) and iat > accepted_at + 300:
+    if _finite_number(iat) and iat > accepted_at + 300:
         out.errors.append("the confirmation was issued after the receipt")
-    out.ok = not out.errors
-    return out
 
 
 # ── one call for everything ───────────────────────────────────────────────────
@@ -433,6 +558,15 @@ def verify(token: str, jwks: Any, *, request: dict[str, Any] | None = None, mand
     res = verify_token(token, jwks, now=now, issuer=issuer)
     if not res.signature_valid:
         return res
+    for name, given in (("request", request), ("mandate reveal", mandate_reveal), ("payee reveal", payee_reveal)):
+        if given is not None and not isinstance(given, dict):
+            res.errors.append(f"the {name} is not a JSON object")
+    if policy_reveal is not None and not isinstance(policy_reveal, (dict, str)):
+        res.errors.append("the policy reveal is not a JSON object or text")
+    request = request if isinstance(request, dict) else None
+    mandate_reveal = mandate_reveal if isinstance(mandate_reveal, dict) else None
+    payee_reveal = payee_reveal if isinstance(payee_reveal, dict) else None
+    policy_reveal = policy_reveal if isinstance(policy_reveal, (dict, str)) else None
     if request is not None:
         res.args_hash_match = check_request_binding(res.claims, tool=request.get("tool", ""), action=request.get("action", ""),
                                                     resource=request.get("resource"), args=request.get("args"))
@@ -458,3 +592,4 @@ def verify_bundle(bundle, **kw):  # noqa: ANN001, ANN201 — thin re-export, see
 def BundleResult():  # noqa: N802 — re-export for `from regent_receipt_verify import BundleResult`
     from .bundle import BundleResult as _BR
     return _BR
+

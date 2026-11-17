@@ -72,7 +72,7 @@ The RFC 3161 token is the clock a bank's auditor already knows how to read: a pu
 Stamping Authority (DigiCert or Sectigo today) signed the epoch root at seal time, so "this root
 existed no later than genTime" rests on the TSA's key, not on Regent or on any chain. The two
 TSA roots ship with the package (`tsa_roots.pem`, from the Mozilla root store); `--tsa-root`
-adds your own. A bundle without a token reports nothing for this check; a token that fails any
+replaces them with your own. A bundle without a token reports nothing for this check; a token that fails any
 step makes the bundle INVALID.
 
 **What VALID binds, and what it cannot.** Every event verifies on its own bytes, its batch proof
@@ -84,3 +84,133 @@ bundle) is the record; a bundle is evidence for the events it carries.
 Keys default to the ones inside the bundle, which proves consistency; pass the JWKS you saved
 (`--jwks`, `--checkpoint-jwks`) to prove provenance. The checkpoint JWKS is public at
 `https://api.regentprotocol.org/v1/audit/.well-known/jwks.json`.
+
+## The owner's approval (0.9.1: compared with the receipt, not verified)
+
+A receipt names its approval by digest (`approval_digest`). A bundle downloaded with the
+approval revealed (a signed-in admin of the organization only) carries an `approval` block
+with the exact evidence string that was hashed. `regent-verify bundle` checks one thing
+about that block, with no call to Regent: **the evidence bytes hash to the digest that a
+verified receipt names.** Evidence that was edited, replaced by other evidence, or moved to
+another decision makes the bundle `INVALID`.
+
+**This version does not verify the owner's signature inside the evidence, and it does not
+check that the terms shown beside the evidence are the terms that were approved.** It says
+so itself, in the second line of its output:
+
+```
+VALID — evidence bundle for dec_7f301d041e9f, 3 event(s)
+NOT CHECKED — the owner's approval: this version does not verify it
+```
+
+Two verdicts; read both. The first covers the trail and the receipt. The second is about
+the approval, and in this version it is `NOT CHECKED` or `INVALID`, never anything better.
+The program that verifies the owner's signature is given by Regent, on request, to the
+parties to a dispute and to their auditors and advisers: evidence@regentprotocol.org.
+
+Two rules:
+
+- **The anchor is the receipt, and only the receipt.** The digest comes from a receipt
+  whose signature verified. No event in the bundle can stand in for it: an event's id and
+  type are labels beside its payload, not part of what is hashed into the trail. With no
+  verified receipt nothing is compared. Pass your saved `--jwks`: a bundle that ships its
+  own receipt key proves consistency, not provenance, and a note in the output says which
+  key was used.
+- **Nothing the block merely says is repeated as a finding.** The method and the scope are
+  the receipt's. Dates, the approver's id and "applied" are printed as *stated by the
+  organization, not verified*. No terms are returned.
+
+A block that contradicts the receipt is an error, and the bundle is `INVALID`: another
+method or scope than the receipt's, "no signature was taken" beside a receipt that names a
+digest, "none recorded" beside a receipt that names an approval. A receipt that names an
+approval the bundle does not carry is not an error: the second line then says
+`the bundle does not carry it`. Changes to a mandate listed in the block are counted and
+reported as `NOT CHECKED`.
+
+### Reading the result
+
+- **The exit code and `valid` are the bundle's.** They can be 0 and `True` while the
+  approval is `NOT CHECKED`, and also when the bundle does not carry the approval evidence
+  at all, or says it is not on file: the exit code does not show missing evidence. To know
+  what was checked about the approval, read the second line, or `approval.verdict` in the
+  result. Exit codes: 0 valid, 1 not valid, 2 the program could not do what was asked: a
+  file could not be read (not UTF-8, not JSON, nested deeper than 512, a root file with no
+  PEM certificate, a reveal that is not a JSON object), an option is unknown, abbreviated,
+  missing its value or cannot be enforced, `--now` is not plain digits, the output could
+  not be written, or the program itself failed. When nobody reads the output (`| head`),
+  writing stops and the exit code still gives the verdict.
+- **Arguments are read the same way in both languages**, by the same hand-written reader:
+  `--name value` or `--name=value`, options anywhere, `--` ends the options, one file or
+  token. `--now` takes ASCII digits with an optional fraction and exponent (`1795000000`,
+  `-1e5`), nothing else. One exception outside this program's reach: when standard output
+  is a directory, Python stops before the program starts (exit 1), Node exits 2.
+- **`--approver-key`, `--origin` and `--rp-id` are refused by this version** (exit 2; in
+  the library, an error in the result, whether or not the bundle carries an approval).
+  They pin the owner's key and site where the owner's signature is verified. A
+  requirement that cannot be enforced must not look as if it was.
+- **A receipt checked with a key from the bundle anchors nothing you can rely on.** The
+  evidence is still compared with it, and the output says so: the second line reads
+  `the receipt key came from the bundle`, and a note says which keys were taken from the
+  bundle. Pass `--jwks` (and `--checkpoint-jwks`) with copies you saved.
+- **Automation reads `--json`** (or the library result), never the text. `--json` is plain
+  ASCII. The text is written for a person, and a bundle is untrusted input, so two rules
+  hold in it. Every control character, bidirectional control, zero-width and other
+  default-ignorable character is printed as an escape. Letters of right-to-left scripts,
+  combining marks and private-use characters are printed as they are: a terminal may draw
+  them over or beside their neighbours, but none of them can start a line. And no row is left for the terminal to wrap: a row longer than 78 columns is
+  continued on lines that start with `      | `, so that a label padded to the width of
+  the screen does not start a row of its own. Only two rows start at the left edge: the
+  bundle's verdict and the approval's. A label can still contain any words. This holds on
+  a terminal at least 80 columns wide that draws characters at their usual widths (every
+  character outside ASCII is counted as two columns to leave room). On a narrower
+  terminal, or whenever the answer matters, read `--json`.
+- **The format is strict on purpose.** Base64url in its one spelling (no padding, no stray
+  bits), a receipt token that is exactly `header.payload.signature`, UTF-8 JSON whose
+  numbers a double holds exactly, RSA keys with e=65537 and 2048 to 8192 bits, and every
+  field of a bundle of one type: a number given as text is refused, not converted.
+  Anything else is `malformed` and the bundle is invalid, in this package and in its
+  Node twin alike. The two are tested against each other on the same hostile inputs and
+  give one answer: the same exit code and the same text. `--json` of a bundle is the same in
+  both; `--json` of a token names its fields in each language's style (`signature_valid`,
+  `signatureValid`), as it did in 0.9.0. If they ever give two answers for the same file,
+  treat the bundle as not verified and tell us.
+  Reveals are read so that both languages hash the same bytes: text with a lone
+  surrogate, a version beyond 2**53 - 1, and a policy profile holding anything but text,
+  booleans, null and whole numbers within 2**53 - 1 (12.0 is read as 12), nested no
+  deeper than 64, or a key above U+FFFF, matches nothing. Roots given as PEM text are read
+  by one grammar in both languages (BEGIN, lines of base64, END): a one-line or CR-only
+  certificate, or one with headers, is refused, not read one way here and another there. Two limits remain. Request arguments (`--request`) holding a number with a
+  decimal point (40.0), in exponent form or beyond 2**53 hash differently in Node, which
+  reads them as another double: give such values as integers or text. And a command-line
+  argument that is not valid UTF-8 reaches Python as escaped bytes and Node as U+FFFD.
+- **What 0.9.1 fixes in 0.9.0.** 0.9.0 said nothing about an approval block: a bundle whose
+  approval evidence had been altered or replaced was `VALID`, and one whose block had been
+  removed said nothing either (0.9.1 still calls that bundle `VALID`, and says in its
+  second line that the bundle does not carry the evidence). A label with a line break
+  could print a row that looked like this program's own, and escape sequences reached the
+  terminal. A bundle with a field of the wrong type could end in a stack trace instead of
+  an answer. Upgrade.
+- **What changes when you upgrade from 0.9.0.** The text output is wrapped at 78 columns
+  (continuation lines start with `      | `) and has a second line at the left edge; a
+  script that reads the text should read `--json`, which only gained fields. A key set is
+  read up to its 16th key, across all `--jwks` files together. RSA keys must have
+  e=65537 and 2048 to 8192 bits. A bundle field of the wrong type (a number given as
+  text, a label longer than 128 characters) makes the bundle `malformed` where 0.9.0
+  converted it or let it through. A counterparty confirmation is read as strictly as a
+  receipt; its amount must be a finite number or plain decimal text (0.9.0 in Python
+  let `"nan"` match any amount), and its key must be the one type its algorithm uses:
+  ES256 an EC P-256 key, EdDSA an Ed25519 key, RS256 and PS256 an RSA key with e=65537
+  and 2048 to 8192 bits (0.9.0 in Node accepted any key for any algorithm, an RSA key
+  with e=1 included, whose "signature" anyone can compute). A mandate, payee or policy
+  reveal whose values are not of the types the format defines (a version that is not a
+  whole number, a payee or salt that is not text, a scope that is not a list of texts)
+  matches nothing, where 0.9.0 converted them differently in each language. An unknown keyword argument raises `TypeError`, as Python does.
+
+```python
+from regent_receipt_verify.bundle import verify_bundle
+
+res = verify_bundle(bundle, receipt_jwks=saved_jwks)      # a key you saved, not the bundle's
+res.valid                                                 # the trail and the receipt
+if res.approval is not None:
+    res.approval.verdict, res.approval.why                # "NOT CHECKED" or "INVALID" in this version
+```
